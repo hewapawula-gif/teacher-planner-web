@@ -1,0 +1,10 @@
+{
+  "description": "Displays Sri Lankan teachers' daily timetable with color-coded periods and a timeline highlighting the current class for efficient schedule tracking.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
