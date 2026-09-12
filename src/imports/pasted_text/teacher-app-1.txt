@@ -1,0 +1,5415 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+    ),
+  );
+  runApp(const TeacherApp());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SUBJECT LIST
+// ═══════════════════════════════════════════════════════════════════════════════
+const List<String> kSubjects = [
+  'Mathematics',
+  'Science',
+  'English Language',
+  'History',
+  'Sinhala Language & Literature',
+  'Tamil Language & Literature',
+  'Buddhism',
+  'Catholicism',
+  'Christianity',
+  'Islam',
+  'Saivaneri (Hinduism)',
+  'Business & Accounting Studies',
+  'Geography',
+  'Civic Education',
+  'Entrepreneurship Studies',
+  'Sinhala',
+  'Tamil',
+  'Pali',
+  'Sanskrit',
+  'French',
+  'German',
+  'Hindi',
+  'Japanese',
+  'Arabic',
+  'Korean',
+  'Chinese',
+  'Russian',
+  'Oriental Music',
+  'Western Music',
+  'Carnatic Music',
+  'Art',
+  'Kandyan Dancing',
+  'Low-Country Dancing',
+  'Sabaragamuwa Dancing',
+  'Bharata Natyam',
+  'Drama & Theatre',
+  'Sinhala Literature',
+  'Tamil Literature',
+  'English Literature',
+  'Arabic Literature',
+  'ICT',
+  'Health & Physical Education',
+  'Agriculture & Food Technology',
+  'Home Economics',
+  'Media & Communication Studies',
+  'Design & Technology',
+  'Design & Electrical Technology',
+  'Design & Electronic Technology',
+  'Design & Mechanical Technology',
+  'Arts & Crafts',
+  'Wood Technology',
+  'Building Construction',
+  'Motor Mechanism',
+  'Textile & Garment Technology',
+  'Electronic Writing & Shorthand',
+  'Fisheries & Food Technology',
+  'Chemistry',
+  'Biology',
+  'Physics',
+  'Agricultural Science',
+  'Combined Mathematics',
+  'Higher Mathematics',
+  'Accounting',
+  'Business Studies',
+  'Economics',
+  'Business Statistics',
+  'Engineering Technology',
+  'Bio-Systems Technology',
+  'Science for Technology',
+  'Political Science',
+  'Logic & Scientific Method',
+  'Communication & Media Studies',
+  'Buddhist Civilization',
+  'Christian Civilization',
+  'Islamic Civilization',
+  'Hindu Civilization',
+  'English',
+  'Malay',
+  'General English',
+  'Common General Test',
+  'Project',
+  'Admin',
+  'Office Duty',
+];
+
+const kTaskTypes = [
+  ('video_link', '🔗', 'Video Link'),
+  ('voice_note', '🎙️', 'Voice Note'),
+  ('audio_file', '🎵', 'Audio File'),
+  ('video_file', '🎬', 'Video File'),
+  ('lesson_plan', '📄', 'Lesson Plan'),
+  ('teaching_material', '📚', 'Teaching Materials'),
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// APP STATE
+// ═══════════════════════════════════════════════════════════════════════════════
+class AppState {
+  static String name = '';
+  static String gender = '';
+  static int periods = 8;
+  static int duration = 40;
+  static TimeOfDay? firstStart;
+  static TimeOfDay? lastEnd;
+  static TimeOfDay? intervalStart;
+  static TimeOfDay? intervalEnd;
+  static List<List<Map<String, String>>> timetable = [];
+  static final fontSizeNotifier = ValueNotifier<double>(14.0);
+  static final Map<String, Set<int>> reliefMap = {};
+
+  // tasks[dateKey][periodIdx] = [{type, content, name}]
+  static final Map<String, Map<int, List<Map<String, String>>>> tasks = {};
+  // students[className] = [name, ...]
+  static final Map<String, List<String>> students = {};
+  // attendance[dateKey][periodIdx][studentName] = isPresent
+  static final Map<String, Map<int, Map<String, bool>>> attendance = {};
+
+  static String get title => gender == 'Female'
+      ? 'Teacher'
+      : gender == 'Male'
+      ? 'Sir'
+      : '';
+  static String get displayName =>
+      name.isNotEmpty && title.isNotEmpty ? '$name $title' : name;
+
+  static String dateKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  static List<Map<String, String>> getTasksFor(DateTime d, int periodIdx) =>
+      tasks[dateKey(d)]?[periodIdx] ?? [];
+
+  static void addTask(DateTime d, int periodIdx, Map<String, String> task) {
+    final k = dateKey(d);
+    tasks.putIfAbsent(k, () => {});
+    tasks[k]!.putIfAbsent(periodIdx, () => []);
+    tasks[k]![periodIdx]!.add(task);
+  }
+
+  static void removeTask(DateTime d, int periodIdx, int taskIndex) {
+    final k = dateKey(d);
+    tasks[k]?[periodIdx]?.removeAt(taskIndex);
+  }
+
+  static bool getAttendance(DateTime d, int periodIdx, String student) =>
+      attendance[dateKey(d)]?[periodIdx]?[student] ?? true;
+
+  static void setAttendance(
+    DateTime d,
+    int periodIdx,
+    String student,
+    bool present,
+  ) {
+    final k = dateKey(d);
+    attendance.putIfAbsent(k, () => {});
+    attendance[k]!.putIfAbsent(periodIdx, () => {});
+    attendance[k]![periodIdx]![student] = present;
+  }
+
+  // Collect all unique class names from timetable
+  static List<String> get allClasses {
+    final Set<String> classes = {};
+    for (final day in timetable) {
+      for (final p in day) {
+        final cls = p['class'] ?? '';
+        if (cls.isNotEmpty) classes.add(cls);
+      }
+    }
+    return classes.toList()..sort();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// THEME
+// ═══════════════════════════════════════════════════════════════════════════════
+const kPrimaryBlue = Color(0xFF3B5BDB);
+const kMidBlue = Color(0xFF4C6EF5);
+
+const kGradient = LinearGradient(
+  begin: Alignment.topLeft,
+  end: Alignment.bottomRight,
+  colors: [Color(0xFF3B5BDB), Color(0xFF4C6EF5), Color(0xFF364FC7)],
+);
+
+// White theme for timetable page
+const kBgLight = Color(0xFFF4F6FF);
+const kDarkText = Color(0xFF1A1A2E);
+const kMidText = Color(0xFF6B7280);
+const kBorderCol = Color(0xFFE8EAF6);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// APP ROOT
+// ═══════════════════════════════════════════════════════════════════════════════
+class TeacherApp extends StatelessWidget {
+  const TeacherApp({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Teacher Planner',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: kPrimaryBlue),
+      ),
+      home: const OnboardingFlow(),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ONBOARDING
+// ═══════════════════════════════════════════════════════════════════════════════
+class OnboardingFlow extends StatefulWidget {
+  const OnboardingFlow({super.key});
+  @override
+  State<OnboardingFlow> createState() => _OnboardingFlowState();
+}
+
+class _OnboardingFlowState extends State<OnboardingFlow> {
+  final _pageCtrl = PageController();
+  int _page = 0;
+  static const int kSteps = 8;
+
+  void _next() {
+    if (_page < kSteps - 1) {
+      _pageCtrl.nextPage(
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOutCubic,
+      );
+    } else {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const TimetableSetupPage()),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _pageCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      body: Container(
+        decoration: const BoxDecoration(gradient: kGradient),
+        child: SafeArea(
+          child: Column(
+            children: [
+              _ProgressBar(current: _page, total: kSteps),
+              Expanded(
+                child: PageView(
+                  controller: _pageCtrl,
+                  physics: const NeverScrollableScrollPhysics(),
+                  onPageChanged: (i) => setState(() => _page = i),
+                  children: [
+                    NamePage(onNext: _next),
+                    GenderPage(onNext: _next),
+                    PeriodsPage(onNext: _next),
+                    DurationPage(onNext: _next),
+                    FirstStartPage(onNext: _next),
+                    LastEndPage(onNext: _next),
+                    IntervalStartPage(onNext: _next),
+                    IntervalEndPage(onNext: _next),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProgressBar extends StatelessWidget {
+  final int current, total;
+  const _ProgressBar({required this.current, required this.total});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Step ${current + 1} of $total',
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                '${((current + 1) / total * 100).round()}%',
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: (current + 1) / total,
+              backgroundColor: Colors.white.withValues(alpha: 0.2),
+              valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+              minHeight: 5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QScaffold extends StatelessWidget {
+  final String emoji, question, subtitle;
+  final Widget input;
+  final bool nextEnabled, isLast;
+  final VoidCallback onNext;
+  const _QScaffold({
+    required this.emoji,
+    required this.question,
+    required this.subtitle,
+    required this.input,
+    required this.nextEnabled,
+    required this.onNext,
+    this.isLast = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: EdgeInsets.only(
+        left: 24,
+        right: 24,
+        top: 28,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Center(
+              child: Text(emoji, style: const TextStyle(fontSize: 32)),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            question,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 26,
+              fontWeight: FontWeight.w800,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            subtitle,
+            style: const TextStyle(
+              color: Colors.white60,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 32),
+          input,
+          const SizedBox(height: 32),
+          AnimatedOpacity(
+            opacity: nextEnabled ? 1.0 : 0.4,
+            duration: const Duration(milliseconds: 250),
+            child: SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: ElevatedButton(
+                onPressed: nextEnabled ? onNext : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: kPrimaryBlue,
+                  disabledBackgroundColor: Colors.white,
+                  disabledForegroundColor: kPrimaryBlue,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  elevation: nextEnabled ? 4 : 0,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      isLast ? 'Set Up Timetable' : 'Next',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      isLast
+                          ? Icons.table_chart_rounded
+                          : Icons.arrow_forward_rounded,
+                      size: 20,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+InputDecoration _inDec({
+  required String hint,
+  required IconData icon,
+  String? suffix,
+}) => InputDecoration(
+  hintText: hint,
+  hintStyle: const TextStyle(color: Colors.white38),
+  prefixIcon: Icon(icon, color: Colors.white60),
+  suffixText: suffix,
+  suffixStyle: const TextStyle(
+    color: Colors.white60,
+    fontWeight: FontWeight.w600,
+  ),
+  filled: true,
+  fillColor: Colors.white.withValues(alpha: 0.12),
+  border: OutlineInputBorder(
+    borderRadius: BorderRadius.circular(14),
+    borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+  ),
+  enabledBorder: OutlineInputBorder(
+    borderRadius: BorderRadius.circular(14),
+    borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+  ),
+  focusedBorder: OutlineInputBorder(
+    borderRadius: BorderRadius.circular(14),
+    borderSide: const BorderSide(color: Colors.white, width: 2),
+  ),
+);
+
+class _QuickChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  const _QuickChip({required this.label, required this.selected});
+  @override
+  Widget build(BuildContext context) => AnimatedContainer(
+    duration: const Duration(milliseconds: 180),
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+    decoration: BoxDecoration(
+      color: selected ? Colors.white : Colors.white.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(24),
+      border: Border.all(color: selected ? Colors.white : Colors.white30),
+    ),
+    child: Text(
+      label,
+      style: TextStyle(
+        color: selected ? kPrimaryBlue : Colors.white,
+        fontWeight: FontWeight.w700,
+        fontSize: 14,
+      ),
+    ),
+  );
+}
+
+// ─── Q1 Name ─────────────────────────────────────────────────────────────────
+class NamePage extends StatefulWidget {
+  final VoidCallback onNext;
+  const NamePage({super.key, required this.onNext});
+  @override
+  State<NamePage> createState() => _NamePageState();
+}
+
+class _NamePageState extends State<NamePage> {
+  final _ctrl = TextEditingController();
+  final _focus = FocusNode();
+  @override
+  void initState() {
+    super.initState();
+    _ctrl.text = AppState.name;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _focus.requestFocus());
+    _ctrl.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ok = _ctrl.text.trim().isNotEmpty;
+    return _QScaffold(
+      emoji: '👋',
+      question: "What's your\npreferred name?",
+      subtitle: "This is how we'll address you in the app.",
+      nextEnabled: ok,
+      onNext: () {
+        AppState.name = _ctrl.text.trim();
+        widget.onNext();
+      },
+      input: TextField(
+        controller: _ctrl,
+        focusNode: _focus,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+        ),
+        decoration: _inDec(
+          hint: 'e.g. Nimal',
+          icon: Icons.person_outline_rounded,
+        ),
+        textCapitalization: TextCapitalization.words,
+        textInputAction: TextInputAction.done,
+        onSubmitted: ok ? (_) => widget.onNext() : null,
+      ),
+    );
+  }
+}
+
+// ─── Q2 Gender ───────────────────────────────────────────────────────────────
+class GenderPage extends StatefulWidget {
+  final VoidCallback onNext;
+  const GenderPage({super.key, required this.onNext});
+  @override
+  State<GenderPage> createState() => _GenderPageState();
+}
+
+class _GenderPageState extends State<GenderPage> {
+  String? _sel;
+  @override
+  void initState() {
+    super.initState();
+    _sel = AppState.gender.isNotEmpty ? AppState.gender : null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const opts = [('Male', '👨'), ('Female', '👩'), ('Other', '🧑')];
+    return _QScaffold(
+      emoji: '🪪',
+      question: 'What is\nyour gender?',
+      subtitle: 'Select the option that best describes you.',
+      nextEnabled: _sel != null,
+      onNext: () {
+        AppState.gender = _sel!;
+        widget.onNext();
+      },
+      input: Column(
+        children: opts.map((opt) {
+          final sel = _sel == opt.$1;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: GestureDetector(
+              onTap: () => setState(() => _sel = opt.$1),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
+                decoration: BoxDecoration(
+                  color: sel
+                      ? Colors.white
+                      : Colors.white.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: sel
+                        ? Colors.white
+                        : Colors.white.withValues(alpha: 0.25),
+                    width: sel ? 2 : 1,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Text(opt.$2, style: const TextStyle(fontSize: 24)),
+                    const SizedBox(width: 16),
+                    Text(
+                      opt.$1,
+                      style: TextStyle(
+                        color: sel ? kPrimaryBlue : Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const Spacer(),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: sel ? kPrimaryBlue : Colors.transparent,
+                        border: Border.all(
+                          color: sel ? kPrimaryBlue : Colors.white38,
+                          width: 2,
+                        ),
+                      ),
+                      child: sel
+                          ? const Icon(
+                              Icons.check,
+                              color: Colors.white,
+                              size: 14,
+                            )
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+// ─── Q3 Periods ──────────────────────────────────────────────────────────────
+class PeriodsPage extends StatefulWidget {
+  final VoidCallback onNext;
+  const PeriodsPage({super.key, required this.onNext});
+  @override
+  State<PeriodsPage> createState() => _PeriodsPageState();
+}
+
+class _PeriodsPageState extends State<PeriodsPage> {
+  final _ctrl = TextEditingController();
+  final _focus = FocusNode();
+  @override
+  void initState() {
+    super.initState();
+    if (AppState.periods > 0) _ctrl.text = '${AppState.periods}';
+    WidgetsBinding.instance.addPostFrameCallback((_) => _focus.requestFocus());
+    _ctrl.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  bool get _ok {
+    final v = int.tryParse(_ctrl.text.trim());
+    return v != null && v >= 1 && v <= 12;
+  }
+
+  @override
+  Widget build(BuildContext context) => _QScaffold(
+    emoji: '📚',
+    question: 'How many periods\nper day?',
+    subtitle: 'Total class periods in a school day.',
+    nextEnabled: _ok,
+    onNext: () {
+      AppState.periods = int.parse(_ctrl.text.trim());
+      widget.onNext();
+    },
+    input: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _ctrl,
+          focusNode: _focus,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+          ),
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          decoration: _inDec(
+            hint: 'e.g. 8',
+            icon: Icons.format_list_numbered_rounded,
+            suffix: 'periods',
+          ),
+          onSubmitted: _ok ? (_) => widget.onNext() : null,
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 10,
+          children: [6, 7, 8, 9, 10]
+              .map(
+                (n) => GestureDetector(
+                  onTap: () {
+                    _ctrl.text = '$n';
+                    _focus.unfocus();
+                  },
+                  child: _QuickChip(label: '$n', selected: _ctrl.text == '$n'),
+                ),
+              )
+              .toList(),
+        ),
+      ],
+    ),
+  );
+}
+
+// ─── Q4 Duration ─────────────────────────────────────────────────────────────
+class DurationPage extends StatefulWidget {
+  final VoidCallback onNext;
+  const DurationPage({super.key, required this.onNext});
+  @override
+  State<DurationPage> createState() => _DurationPageState();
+}
+
+class _DurationPageState extends State<DurationPage> {
+  final _ctrl = TextEditingController();
+  final _focus = FocusNode();
+  @override
+  void initState() {
+    super.initState();
+    if (AppState.duration > 0) _ctrl.text = '${AppState.duration}';
+    WidgetsBinding.instance.addPostFrameCallback((_) => _focus.requestFocus());
+    _ctrl.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  bool get _ok {
+    final v = int.tryParse(_ctrl.text.trim());
+    return v != null && v >= 10 && v <= 120;
+  }
+
+  @override
+  Widget build(BuildContext context) => _QScaffold(
+    emoji: '⏱️',
+    question: 'How long is\neach period?',
+    subtitle: 'Duration in minutes.',
+    nextEnabled: _ok,
+    onNext: () {
+      AppState.duration = int.parse(_ctrl.text.trim());
+      widget.onNext();
+    },
+    input: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _ctrl,
+          focusNode: _focus,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+          ),
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          decoration: _inDec(
+            hint: 'e.g. 40',
+            icon: Icons.timer_outlined,
+            suffix: 'minutes',
+          ),
+          onSubmitted: _ok ? (_) => widget.onNext() : null,
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 10,
+          children: [30, 35, 40, 45, 50]
+              .map(
+                (n) => GestureDetector(
+                  onTap: () {
+                    _ctrl.text = '$n';
+                    _focus.unfocus();
+                  },
+                  child: _QuickChip(
+                    label: '${n}m',
+                    selected: _ctrl.text == '$n',
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+      ],
+    ),
+  );
+}
+
+// ─── Q5-Q8 Time pages ────────────────────────────────────────────────────────
+class _TimePage extends StatefulWidget {
+  final String emoji, question, subtitle;
+  final TimeOfDay? initial;
+  final bool isLast;
+  final VoidCallback onNext;
+  final void Function(TimeOfDay) onSave;
+  const _TimePage({
+    required this.emoji,
+    required this.question,
+    required this.subtitle,
+    required this.initial,
+    required this.onNext,
+    required this.onSave,
+    this.isLast = false,
+  });
+  @override
+  State<_TimePage> createState() => _TimePageState();
+}
+
+class _TimePageState extends State<_TimePage> {
+  TimeOfDay? _sel;
+  @override
+  void initState() {
+    super.initState();
+    _sel = widget.initial;
+  }
+
+  Future<void> _pick() async {
+    final t = await showTimePicker(
+      context: context,
+      initialTime: _sel ?? const TimeOfDay(hour: 7, minute: 30),
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: Colors.white,
+            onPrimary: kPrimaryBlue,
+            surface: kMidBlue,
+            onSurface: Colors.white,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (t != null) setState(() => _sel = t);
+  }
+
+  @override
+  Widget build(BuildContext context) => _QScaffold(
+    emoji: widget.emoji,
+    question: widget.question,
+    subtitle: widget.subtitle,
+    isLast: widget.isLast,
+    nextEnabled: _sel != null,
+    onNext: () {
+      widget.onSave(_sel!);
+      widget.onNext();
+    },
+    input: Column(
+      children: [
+        GestureDetector(
+          onTap: _pick,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  _sel != null ? _fmt12Tod(_sel!) : '--:-- --',
+                  style: TextStyle(
+                    color: _sel != null ? Colors.white : Colors.white38,
+                    fontSize: 44,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: const [
+                    Icon(
+                      Icons.touch_app_rounded,
+                      color: Colors.white54,
+                      size: 16,
+                    ),
+                    SizedBox(width: 6),
+                    Text(
+                      'Tap to select time',
+                      style: TextStyle(color: Colors.white54, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _pick,
+            icon: const Icon(Icons.access_time_rounded, color: Colors.white),
+            label: const Text(
+              'Open Time Picker',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              side: BorderSide(color: Colors.white.withValues(alpha: 0.4)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class FirstStartPage extends StatelessWidget {
+  final VoidCallback onNext;
+  const FirstStartPage({super.key, required this.onNext});
+  @override
+  Widget build(BuildContext context) => _TimePage(
+    emoji: '🌅',
+    question: 'When does the\nfirst period start?',
+    subtitle: 'Starting time of your first class.',
+    initial: AppState.firstStart,
+    onNext: onNext,
+    onSave: (t) => AppState.firstStart = t,
+  );
+}
+
+class LastEndPage extends StatelessWidget {
+  final VoidCallback onNext;
+  const LastEndPage({super.key, required this.onNext});
+  @override
+  Widget build(BuildContext context) => _TimePage(
+    emoji: '🌇',
+    question: 'When does the\nlast period end?',
+    subtitle: 'Ending time of your last class.',
+    initial: AppState.lastEnd,
+    onNext: onNext,
+    onSave: (t) => AppState.lastEnd = t,
+  );
+}
+
+class IntervalStartPage extends StatelessWidget {
+  final VoidCallback onNext;
+  const IntervalStartPage({super.key, required this.onNext});
+  @override
+  Widget build(BuildContext context) => _TimePage(
+    emoji: '☕',
+    question: 'When does the\ninterval start?',
+    subtitle: 'Starting time of the school interval.',
+    initial: AppState.intervalStart,
+    onNext: onNext,
+    onSave: (t) => AppState.intervalStart = t,
+  );
+}
+
+class IntervalEndPage extends StatelessWidget {
+  final VoidCallback onNext;
+  const IntervalEndPage({super.key, required this.onNext});
+  @override
+  Widget build(BuildContext context) => _TimePage(
+    emoji: '🔔',
+    question: 'When does the\ninterval end?',
+    subtitle: 'Ending time of the school interval.',
+    initial: AppState.intervalEnd,
+    onNext: onNext,
+    isLast: true,
+    onSave: (t) => AppState.intervalEnd = t,
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TIMETABLE SETUP  (no OFF button — empty period = auto OFF)
+// ═══════════════════════════════════════════════════════════════════════════════
+class _PeriodEntry {
+  final int number;
+  String subject;
+  String className;
+  _PeriodEntry({required this.number, this.subject = '', this.className = ''});
+}
+
+class TimetableSetupPage extends StatefulWidget {
+  const TimetableSetupPage({super.key});
+  @override
+  State<TimetableSetupPage> createState() => _TimetableSetupPageState();
+}
+
+class _TimetableSetupPageState extends State<TimetableSetupPage>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabs;
+  late List<List<_PeriodEntry>> _entries;
+  int _dayIdx = 0;
+  static const _days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+
+  @override
+  void initState() {
+    super.initState();
+    final n = AppState.periods > 0 ? AppState.periods : 8;
+    _entries = List.generate(5, (d) {
+      final saved = AppState.timetable.length > d
+          ? AppState.timetable[d]
+          : <Map<String, String>>[];
+      return List.generate(n, (i) {
+        final m = i < saved.length ? saved[i] : <String, String>{};
+        return _PeriodEntry(
+          number: i + 1,
+          subject: m['subject'] ?? '',
+          className: m['class'] ?? '',
+        );
+      });
+    });
+    _tabs = TabController(length: 5, vsync: this)
+      ..addListener(() {
+        if (!_tabs.indexIsChanging) setState(() => _dayIdx = _tabs.index);
+      });
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  void _finish() {
+    AppState.timetable = _entries
+        .map(
+          (day) => day
+              .map(
+                (p) => {
+                  'subject': p.subject.isEmpty ? 'Off Period' : p.subject,
+                  'class': p.className,
+                  'type': (p.subject.isEmpty && p.className.isEmpty)
+                      ? 'off'
+                      : 'subject',
+                },
+              )
+              .toList(),
+        )
+        .toList();
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const TimetablePage()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      body: Container(
+        decoration: const BoxDecoration(gradient: kGradient),
+        child: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(),
+              const SizedBox(height: 8),
+              _buildTabs(),
+              const SizedBox(height: 6),
+              Expanded(child: _buildList()),
+              _buildFooter(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() => Padding(
+    padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+    child: Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Hello, ${AppState.displayName} 👋',
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              const Text(
+                'Set Up Your Timetable',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 2),
+              const Text(
+                'Leave a period empty → auto Off period',
+                style: TextStyle(color: Colors.white54, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+        _Avatar(name: AppState.name, size: 42),
+      ],
+    ),
+  );
+
+  Widget _buildTabs() => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    child: Container(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: TabBar(
+        controller: _tabs,
+        isScrollable: true,
+        tabAlignment: TabAlignment.start,
+        indicator: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        indicatorSize: TabBarIndicatorSize.tab,
+        indicatorPadding: const EdgeInsets.all(4),
+        dividerColor: Colors.transparent,
+        labelColor: kPrimaryBlue,
+        unselectedLabelColor: Colors.white70,
+        labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+        unselectedLabelStyle: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+        tabs: _days.map((d) => Tab(text: d.substring(0, 3))).toList(),
+      ),
+    ),
+  );
+
+  Widget _buildList() {
+    final day = _entries[_dayIdx];
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      itemCount: day.length,
+      itemBuilder: (_, i) =>
+          _PeriodEntryCard(entry: day[i], onChange: () => setState(() {})),
+    );
+  }
+
+  Widget _buildFooter() => Padding(
+    padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+    child: Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(
+            5,
+            (i) => AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              margin: const EdgeInsets.symmetric(horizontal: 4),
+              width: i == _dayIdx ? 20 : 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: i == _dayIdx ? Colors.white : Colors.white30,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            if (_dayIdx > 0)
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: SizedBox(
+                  height: 52,
+                  child: OutlinedButton(
+                    onPressed: () => _tabs.animateTo(_dayIdx - 1),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.4),
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                    ),
+                    child: const Icon(
+                      Icons.arrow_back_rounded,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            Expanded(
+              child: SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: _dayIdx < 4
+                      ? () => _tabs.animateTo(_dayIdx + 1)
+                      : _finish,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: kPrimaryBlue,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 4,
+                  ),
+                  child: Text(
+                    _dayIdx < 4
+                        ? 'Next → ${_days[_dayIdx + 1]}'
+                        : 'View My Timetable ✓',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+// ─── Period entry card (no OFF button) ───────────────────────────────────────
+class _PeriodEntryCard extends StatefulWidget {
+  final _PeriodEntry entry;
+  final VoidCallback onChange;
+  const _PeriodEntryCard({required this.entry, required this.onChange});
+  @override
+  State<_PeriodEntryCard> createState() => _PeriodEntryCardState();
+}
+
+class _PeriodEntryCardState extends State<_PeriodEntryCard> {
+  late TextEditingController _classCtrl;
+  @override
+  void initState() {
+    super.initState();
+    _classCtrl = TextEditingController(text: widget.entry.className);
+    _classCtrl.addListener(() {
+      widget.entry.className = _classCtrl.text;
+      widget.onChange();
+    });
+  }
+
+  @override
+  void dispose() {
+    _classCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _filled =>
+      widget.entry.subject.isNotEmpty && widget.entry.className.isNotEmpty;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = _filled
+        ? const Color(0xFFD1FAE5)
+        : Colors.white.withValues(alpha: 0.13);
+    final fg = _filled ? const Color(0xFF065F46) : Colors.white;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black.withValues(alpha: 0.1),
+                  ),
+                  child: Center(
+                    child: Text(
+                      '${widget.entry.number}',
+                      style: TextStyle(
+                        color: fg,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Period ${widget.entry.number}',
+                  style: TextStyle(
+                    color: fg,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const Spacer(),
+                if (!_filled)
+                  Text(
+                    'empty = Off',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.4),
+                      fontSize: 10,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: _SubjectField(
+                    initialValue: widget.entry.subject,
+                    onChanged: (v) {
+                      widget.entry.subject = v;
+                      widget.onChange();
+                      setState(() {});
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: TextField(
+                    controller: _classCtrl,
+                    textCapitalization: TextCapitalization.characters,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[A-Z0-9]')),
+                    ],
+                    style: TextStyle(
+                      color: fg,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    decoration: _compactDec(
+                      hint: 'Class e.g. 10C',
+                      icon: Icons.group_outlined,
+                    ),
+                    textInputAction: TextInputAction.done,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Subject autocomplete ─────────────────────────────────────────────────────
+class _SubjectField extends StatefulWidget {
+  final String initialValue;
+  final void Function(String) onChanged;
+  const _SubjectField({required this.initialValue, required this.onChanged});
+  @override
+  State<_SubjectField> createState() => _SubjectFieldState();
+}
+
+class _SubjectFieldState extends State<_SubjectField> {
+  late TextEditingController _ctrl;
+  List<String> _suggestions = [];
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.initialValue);
+    _ctrl.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _onChanged() {
+    final q = _ctrl.text;
+    widget.onChanged(q);
+    setState(
+      () => _suggestions = q.isEmpty
+          ? []
+          : kSubjects
+                .where((s) => s.toLowerCase().contains(q.toLowerCase()))
+                .take(6)
+                .toList(),
+    );
+  }
+
+  void _select(String s) {
+    _ctrl.value = TextEditingValue(
+      text: s,
+      selection: TextSelection.collapsed(offset: s.length),
+    );
+    widget.onChanged(s);
+    setState(() => _suggestions = []);
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      TextField(
+        controller: _ctrl,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+        textCapitalization: TextCapitalization.words,
+        decoration: _compactDec(hint: 'Subject', icon: Icons.book_outlined),
+        textInputAction: TextInputAction.next,
+      ),
+      if (_suggestions.isNotEmpty)
+        Container(
+          margin: const EdgeInsets.only(top: 4),
+          constraints: const BoxConstraints(maxHeight: 180),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2C47D0),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 8,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: ListView.builder(
+              shrinkWrap: true,
+              physics: const ClampingScrollPhysics(),
+              itemCount: _suggestions.length,
+              itemBuilder: (_, i) => Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => _select(_suggestions[i]),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    child: Text(
+                      _suggestions[i],
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+    ],
+  );
+}
+
+InputDecoration _compactDec({required String hint, required IconData icon}) =>
+    InputDecoration(
+      hintText: hint,
+      hintStyle: const TextStyle(color: Colors.white38, fontSize: 12),
+      prefixIcon: Icon(icon, color: Colors.white38, size: 16),
+      contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
+      isDense: true,
+      filled: true,
+      fillColor: Colors.white.withValues(alpha: 0.12),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: Colors.white, width: 1.5),
+      ),
+    );
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PERIOD MODEL & COLORS
+// ═══════════════════════════════════════════════════════════════════════════════
+enum PeriodType { regular, current, off, relief }
+
+class PCol {
+  final Color bg, border, text, badge, badgeText;
+  const PCol({
+    required this.bg,
+    required this.border,
+    required this.text,
+    required this.badge,
+    required this.badgeText,
+  });
+}
+
+PCol pColors(PeriodType t) {
+  switch (t) {
+    case PeriodType.current:
+      return const PCol(
+        bg: Color(0xFFEF4444),
+        border: Color(0xFFDC2626),
+        text: Colors.white,
+        badge: Color(0x44FFFFFF),
+        badgeText: Colors.white,
+      );
+    case PeriodType.off:
+      return const PCol(
+        bg: Color(0xFFE8E8EA),
+        border: Color(0xFFCBCBD0),
+        text: Color(0xFF5C5C6E),
+        badge: Color(0xFFABABBB),
+        badgeText: Colors.white,
+      );
+    case PeriodType.relief:
+      return const PCol(
+        bg: Color(0xFFFEF9C3),
+        border: Color(0xFFFDE68A),
+        text: Color(0xFF78350F),
+        badge: Color(0xFFFBBF24),
+        badgeText: Colors.white,
+      );
+    case PeriodType.regular:
+      return const PCol(
+        bg: Color(0xFFD1FAE5),
+        border: Color(0xFF6EE7B7),
+        text: Color(0xFF065F46),
+        badge: Color(0xFF34D399),
+        badgeText: Colors.white,
+      );
+  }
+}
+
+class Period {
+  final int number;
+  final String subject, className;
+  final PeriodType type;
+  final TimeOfDay startTime, endTime;
+  const Period({
+    required this.number,
+    required this.subject,
+    required this.className,
+    required this.type,
+    required this.startTime,
+    required this.endTime,
+  });
+  Period copyWith({PeriodType? type}) => Period(
+    number: number,
+    subject: subject,
+    className: className,
+    type: type ?? this.type,
+    startTime: startTime,
+    endTime: endTime,
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+int _toMin(TimeOfDay t) => t.hour * 60 + t.minute;
+String _fmt12Tod(TimeOfDay t) {
+  final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+  final m = t.minute.toString().padLeft(2, '0');
+  final ampm = t.hour < 12 ? "AM" : "PM";
+  return "$h:$m $ampm";
+}
+
+String _fmt12Now(DateTime dt) {
+  final h = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+  final m = dt.minute.toString().padLeft(2, '0');
+  final ampm = dt.hour < 12 ? "AM" : "PM";
+  return "$h:$m $ampm";
+}
+
+List<Period> buildPeriods(DateTime now) {
+  final n = AppState.periods > 0 ? AppState.periods : 8;
+  final start = AppState.firstStart ?? const TimeOfDay(hour: 7, minute: 30);
+  final dur = AppState.duration > 0 ? AppState.duration : 40;
+  final intS = AppState.intervalStart;
+  final intE = AppState.intervalEnd;
+  final dayIdx = now.weekday - 1 < 5 ? now.weekday - 1 : 0;
+  final saved = AppState.timetable.length > dayIdx
+      ? AppState.timetable[dayIdx]
+      : <Map<String, String>>[];
+  final List<Period> result = [];
+  int cur = _toMin(start);
+  for (int i = 0; i < n; i++) {
+    if (intS != null && intE != null && cur == _toMin(intS)) cur = _toMin(intE);
+    final ps = TimeOfDay(hour: cur ~/ 60, minute: cur % 60);
+    final end = cur + dur;
+    final pe = TimeOfDay(hour: end ~/ 60, minute: end % 60);
+    final m = i < saved.length ? saved[i] : <String, String>{};
+    final sub = m['subject'] ?? '';
+    final cls = m['class'] ?? '';
+    final tp = m['type'] ?? 'subject';
+    // Auto OFF if empty or explicitly off
+    PeriodType type = (sub.isEmpty || sub == 'Off Period' || tp == 'off')
+        ? PeriodType.off
+        : PeriodType.regular;
+    result.add(
+      Period(
+        number: i + 1,
+        subject: sub,
+        className: cls,
+        type: type,
+        startTime: ps,
+        endTime: pe,
+      ),
+    );
+    cur = end;
+  }
+  // Apply daily relief
+  final dk = AppState.dateKey(now);
+  final relieved = AppState.reliefMap[dk] ?? {};
+  // Mark current + relief
+  final nowMins = now.hour * 60 + now.minute;
+  return result.asMap().entries.map((e) {
+    final i = e.key;
+    final p = e.value;
+    if (relieved.contains(i) && p.type == PeriodType.regular) {
+      return p.copyWith(type: PeriodType.relief);
+    }
+    if (p.type == PeriodType.regular &&
+        nowMins >= _toMin(p.startTime) &&
+        nowMins < _toMin(p.endTime)) {
+      return p.copyWith(type: PeriodType.current);
+    }
+    return p;
+  }).toList();
+}
+
+int getActiveIdx(List<Period> periods, DateTime now) {
+  final nowMins = now.hour * 60 + now.minute;
+  for (int i = 0; i < periods.length; i++) {
+    if (nowMins >= _toMin(periods[i].startTime) &&
+        nowMins < _toMin(periods[i].endTime)) {
+      return i;
+    }
+  }
+  return periods.length > 3 ? 3 : 0;
+}
+
+// ─── Avatar ───────────────────────────────────────────────────────────────────
+class _Avatar extends StatelessWidget {
+  final String name;
+  final double size;
+  final Color? bg;
+  const _Avatar({required this.name, required this.size, this.bg});
+  @override
+  Widget build(BuildContext context) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      color: bg ?? Colors.white.withValues(alpha: 0.2),
+      border: Border.all(color: Colors.white.withValues(alpha: 0.3), width: 2),
+    ),
+    child: Center(
+      child: Text(
+        name.isNotEmpty ? name[0].toUpperCase() : 'T',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: size * 0.42,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    ),
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TIMETABLE PAGE  (white theme)
+// ═══════════════════════════════════════════════════════════════════════════════
+class TimetablePage extends StatefulWidget {
+  const TimetablePage({super.key});
+  @override
+  State<TimetablePage> createState() => _TimetablePageState();
+}
+
+class _TimetablePageState extends State<TimetablePage> {
+  late DateTime _now;
+  late Timer _timer;
+  int _navIdx = 0;
+  @override
+  void initState() {
+    super.initState();
+    _now = DateTime.now();
+    _timer = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => setState(() => _now = DateTime.now()),
+    );
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  String get _dayName {
+    const d = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    return d[_now.weekday - 1];
+  }
+
+  String get _dateLabel {
+    const m = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return '${_now.day} ${m[_now.month - 1]} ${_now.year}';
+  }
+
+  void _openDetail(Period period, int periodIdx) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) =>
+          PeriodDetailSheet(period: period, periodIdx: periodIdx, date: _now),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final periods = buildPeriods(_now);
+    final activeIdx = getActiveIdx(periods, _now);
+    return ValueListenableBuilder<double>(
+      valueListenable: AppState.fontSizeNotifier,
+      builder: (context, fs, _) => Scaffold(
+        backgroundColor: kBgLight,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(fs),
+              _buildLegend(),
+              const SizedBox(height: 8),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (_, c) {
+                            final n = periods.length;
+                            const gap = 5.0;
+                            final cardH = (c.maxHeight - gap * (n - 1)) / n;
+                            return Column(
+                              children: List.generate(
+                                n,
+                                (i) => Padding(
+                                  padding: EdgeInsets.only(
+                                    bottom: i < n - 1 ? gap : 0,
+                                  ),
+                                  child: SizedBox(
+                                    height: cardH,
+                                    child: GestureDetector(
+                                      onTap: () => _openDetail(periods[i], i),
+                                      child: PeriodCard(
+                                        period: periods[i],
+                                        isActive: i == activeIdx,
+                                        fontSize: fs,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 60,
+                        child: TimetableTimeline(
+                          currentTime: _fmt12Now(_now),
+                          activePeriodIdx: activeIdx,
+                          totalPeriods: periods.length,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              _buildNav(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(double fs) => Container(
+    color: Colors.white,
+    padding: const EdgeInsets.fromLTRB(18, 12, 18, 12),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _dayName.toUpperCase(),
+                style: const TextStyle(
+                  color: kMidText,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 2,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Hello, ${AppState.displayName} 👋',
+                style: TextStyle(
+                  color: kDarkText,
+                  fontSize: fs + 6,
+                  fontWeight: FontWeight.w800,
+                  height: 1.2,
+                ),
+              ),
+              const SizedBox(height: 5),
+              // Highlighted date
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: kPrimaryBlue,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  _dateLabel,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: fs + 2,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: kPrimaryBlue,
+                boxShadow: [
+                  BoxShadow(
+                    color: kPrimaryBlue.withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Center(
+                child: Text(
+                  AppState.name.isNotEmpty
+                      ? AppState.name[0].toUpperCase()
+                      : 'T',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 4),
+            // Live time display
+            Text(
+              _fmt12Now(DateTime.now()),
+              style: const TextStyle(
+                color: Color(0xFFEF4444),
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildLegend() => Container(
+    color: Colors.white,
+    padding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+    child: Row(
+      children:
+          [
+                ('Assigned', const Color(0xFFFF80AB)),
+                ('Current', const Color(0xFFEF4444)),
+                ('Off', const Color(0xFF86EFAC)),
+                ('Relief', const Color(0xFFFB923C)),
+              ]
+              .map(
+                (item) => Padding(
+                  padding: const EdgeInsets.only(right: 14),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: item.$2,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        item.$1,
+                        style: const TextStyle(
+                          color: kMidText,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+              .toList(),
+    ),
+  );
+
+  Widget _buildNav() {
+    final items = [
+      (Icons.home_rounded, 'Home'),
+      (Icons.calendar_month_rounded, 'Schedule'),
+      (Icons.task_rounded, 'Tasks'),
+      (Icons.settings_rounded, 'Settings'),
+    ];
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: kBorderCol)),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: List.generate(items.length, (i) {
+          final active = i == _navIdx;
+          return GestureDetector(
+            onTap: () {
+              if (i == 1) {
+                Navigator.of(context)
+                    .push(
+                      MaterialPageRoute(builder: (_) => const SchedulePage()),
+                    )
+                    .then((_) => setState(() {}));
+              } else if (i == 2) {
+                Navigator.of(context)
+                    .push(MaterialPageRoute(builder: (_) => const TasksPage()))
+                    .then((_) => setState(() {}));
+              } else if (i == 3) {
+                Navigator.of(context)
+                    .push(
+                      MaterialPageRoute(builder: (_) => const SettingsPage()),
+                    )
+                    .then((_) => setState(() {}));
+              } else {
+                setState(() => _navIdx = i);
+              }
+            },
+            behavior: HitTestBehavior.opaque,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  items[i].$1,
+                  color: active ? kPrimaryBlue : kMidText,
+                  size: 22,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  items[i].$2,
+                  style: TextStyle(
+                    color: active ? kPrimaryBlue : kMidText,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (active) ...[
+                  const SizedBox(height: 2),
+                  Container(
+                    width: 4,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: kPrimaryBlue,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        }),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PERIOD DETAIL SHEET  (tasks + attendance)
+// ═══════════════════════════════════════════════════════════════════════════════
+class PeriodDetailSheet extends StatefulWidget {
+  final Period period;
+  final int periodIdx;
+  final DateTime date;
+  const PeriodDetailSheet({
+    super.key,
+    required this.period,
+    required this.periodIdx,
+    required this.date,
+  });
+  @override
+  State<PeriodDetailSheet> createState() => _PeriodDetailSheetState();
+}
+
+class _PeriodDetailSheetState extends State<PeriodDetailSheet>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabs;
+  @override
+  void initState() {
+    super.initState();
+    _tabs = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  PCol get c => pColors(widget.period.type);
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      maxChildSize: 0.95,
+      minChildSize: 0.5,
+      builder: (_, scroll) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            // Handle
+            Container(
+              margin: const EdgeInsets.only(top: 10),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: kBorderCol,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Period header
+            Container(
+              margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: c.bg,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: c.border),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.black.withValues(alpha: 0.12),
+                    ),
+                    child: Center(
+                      child: Text(
+                        '${widget.period.number}',
+                        style: TextStyle(
+                          color: c.text,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.period.subject.isEmpty
+                              ? 'Off Period'
+                              : widget.period.subject,
+                          style: TextStyle(
+                            color: c.text,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        Text(
+                          '${_fmt12Tod(widget.period.startTime)} – ${_fmt12Tod(widget.period.endTime)}',
+                          style: TextStyle(
+                            color: c.text.withValues(alpha: 0.7),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (widget.period.className.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: c.badge,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        widget.period.className,
+                        style: TextStyle(
+                          color: c.badgeText,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            // Tabs
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: kBgLight,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: TabBar(
+                  controller: _tabs,
+                  indicator: BoxDecoration(
+                    color: kPrimaryBlue,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  indicatorPadding: const EdgeInsets.all(4),
+                  dividerColor: Colors.transparent,
+                  labelColor: Colors.white,
+                  unselectedLabelColor: kMidText,
+                  labelStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                  ),
+                  tabs: const [
+                    Tab(text: '📎  Tasks'),
+                    Tab(text: '✅  Attendance'),
+                  ],
+                ),
+              ),
+            ),
+            Expanded(
+              child: TabBarView(
+                controller: _tabs,
+                children: [
+                  _TasksTab(
+                    period: widget.period,
+                    periodIdx: widget.periodIdx,
+                    date: widget.date,
+                    onChanged: () => setState(() {}),
+                  ),
+                  _AttendanceTab(
+                    period: widget.period,
+                    periodIdx: widget.periodIdx,
+                    date: widget.date,
+                    onChanged: () => setState(() {}),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Tasks tab ────────────────────────────────────────────────────────────────
+class _TasksTab extends StatelessWidget {
+  final Period period;
+  final int periodIdx;
+  final DateTime date;
+  final VoidCallback onChanged;
+  const _TasksTab({
+    required this.period,
+    required this.periodIdx,
+    required this.date,
+    required this.onChanged,
+  });
+
+  IconData _icon(String type) {
+    switch (type) {
+      case 'video_link':
+        return Icons.link_rounded;
+      case 'voice_note':
+        return Icons.mic_rounded;
+      case 'audio_file':
+        return Icons.audiotrack_rounded;
+      case 'video_file':
+        return Icons.videocam_rounded;
+      case 'lesson_plan':
+        return Icons.description_rounded;
+      case 'teaching_material':
+        return Icons.menu_book_rounded;
+      default:
+        return Icons.attach_file_rounded;
+    }
+  }
+
+  Color _color(String type) {
+    switch (type) {
+      case 'video_link':
+        return const Color(0xFF6366F1);
+      case 'voice_note':
+        return const Color(0xFFEC4899);
+      case 'audio_file':
+        return const Color(0xFF8B5CF6);
+      case 'video_file':
+        return const Color(0xFFEF4444);
+      case 'lesson_plan':
+        return const Color(0xFF059669);
+      case 'teaching_material':
+        return const Color(0xFFF59E0B);
+      default:
+        return kPrimaryBlue;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final taskList = AppState.getTasksFor(date, periodIdx);
+    return Column(
+      children: [
+        Expanded(
+          child: taskList.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.attach_file_rounded,
+                        size: 48,
+                        color: kBorderCol,
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'No tasks attached yet',
+                        style: TextStyle(
+                          color: kMidText,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Tap + to add a task',
+                        style: TextStyle(color: kMidText, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  itemCount: taskList.length,
+                  itemBuilder: (_, i) {
+                    final t = taskList[i];
+                    final color = _color(t['type'] ?? '');
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.06),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: color.withValues(alpha: 0.2)),
+                      ),
+                      child: ListTile(
+                        leading: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: 0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            _icon(t['type'] ?? ''),
+                            color: color,
+                            size: 20,
+                          ),
+                        ),
+                        title: Text(
+                          t['name'] ?? '',
+                          style: TextStyle(
+                            color: kDarkText,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        subtitle: Text(
+                          t['content'] ?? '',
+                          style: TextStyle(color: kMidText, fontSize: 11),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: IconButton(
+                          icon: const Icon(
+                            Icons.delete_outline_rounded,
+                            color: Color(0xFFEF4444),
+                            size: 20,
+                          ),
+                          onPressed: () {
+                            AppState.removeTask(date, periodIdx, i);
+                            onChanged();
+                          },
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton.icon(
+              onPressed: () => showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (_) => AddTaskSheet(
+                  onAdd: (t) {
+                    AppState.addTask(date, periodIdx, t);
+                    onChanged();
+                  },
+                ),
+              ),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text(
+                'Attach Task',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kPrimaryBlue,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Attendance tab ───────────────────────────────────────────────────────────
+class _AttendanceTab extends StatefulWidget {
+  final Period period;
+  final int periodIdx;
+  final DateTime date;
+  final VoidCallback onChanged;
+  const _AttendanceTab({
+    required this.period,
+    required this.periodIdx,
+    required this.date,
+    required this.onChanged,
+  });
+  @override
+  State<_AttendanceTab> createState() => _AttendanceTabState();
+}
+
+class _AttendanceTabState extends State<_AttendanceTab> {
+  @override
+  Widget build(BuildContext context) {
+    final className = widget.period.className;
+    final studentList = AppState.students[className] ?? [];
+    if (className.isEmpty || studentList.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.people_outline_rounded, size: 48, color: kBorderCol),
+            const SizedBox(height: 12),
+            Text(
+              className.isEmpty
+                  ? 'No class assigned to this period'
+                  : 'No students added for $className',
+              style: const TextStyle(
+                color: kMidText,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Add students in Settings → Student Names',
+              style: TextStyle(color: kMidText, fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+    final presentCount = studentList
+        .where((s) => AppState.getAttendance(widget.date, widget.periodIdx, s))
+        .length;
+    return Column(
+      children: [
+        // Summary bar
+        Container(
+          margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: kBgLight,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              _statBadge('Present', '$presentCount', const Color(0xFF22C55E)),
+              const SizedBox(width: 12),
+              _statBadge(
+                'Absent',
+                '${studentList.length - presentCount}',
+                const Color(0xFFEF4444),
+              ),
+              const Spacer(),
+              Text(
+                'Class $className',
+                style: const TextStyle(
+                  color: kMidText,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Column headers
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Student Name',
+                  style: TextStyle(
+                    color: kMidText,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const Text(
+                'Status',
+                style: TextStyle(
+                  color: kMidText,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            itemCount: studentList.length,
+            itemBuilder: (_, i) {
+              final name = studentList[i];
+              final isPresent = AppState.getAttendance(
+                widget.date,
+                widget.periodIdx,
+                name,
+              );
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: kBorderCol),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.03),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          name,
+                          style: const TextStyle(
+                            color: kDarkText,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () {
+                          AppState.setAttendance(
+                            widget.date,
+                            widget.periodIdx,
+                            name,
+                            !isPresent,
+                          );
+                          setState(() {});
+                          widget.onChanged();
+                        },
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 7,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: isPresent
+                                  ? const Color(0xFF22C55E)
+                                  : const Color(0xFFEF4444),
+                              width: 2,
+                            ),
+                          ),
+                          child: Text(
+                            isPresent ? 'Present' : 'Absent',
+                            style: TextStyle(
+                              color: isPresent
+                                  ? const Color(0xFF22C55E)
+                                  : const Color(0xFFEF4444),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _statBadge(String label, String val, Color color) => Row(
+    children: [
+      Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      ),
+      const SizedBox(width: 5),
+      Text(
+        '$val $label',
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    ],
+  );
+}
+
+// ─── Add task sheet ───────────────────────────────────────────────────────────
+class AddTaskSheet extends StatefulWidget {
+  final void Function(Map<String, String>) onAdd;
+  const AddTaskSheet({super.key, required this.onAdd});
+  @override
+  State<AddTaskSheet> createState() => _AddTaskSheetState();
+}
+
+class _AddTaskSheetState extends State<AddTaskSheet> {
+  String _type = 'video_link';
+  final _nameCtrl = TextEditingController();
+  final _contentCtrl = TextEditingController();
+  String? _pickedFileName;
+  String? _pickedFilePath;
+  bool _picking = false;
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _contentCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _isUrl => _type == 'video_link';
+  bool get _isText => _type == 'lesson_plan' || _type == 'teaching_material';
+  bool get _isFile => !_isUrl && !_isText;
+
+  FileType get _fileType {
+    switch (_type) {
+      case 'audio_file':
+        return FileType.audio;
+      case 'video_file':
+        return FileType.video;
+      case 'voice_note':
+        return FileType.audio;
+      default:
+        return FileType.any;
+    }
+  }
+
+  Future<void> _pickFile() async {
+    setState(() => _picking = true);
+    try {
+      final f = await FilePicker.pickFile(type: _fileType);
+      if (f != null) {
+        setState(() {
+          _pickedFileName = f.name;
+          _pickedFilePath = f.path ?? f.name;
+          if (_nameCtrl.text.trim().isEmpty) _nameCtrl.text = f.name;
+        });
+      }
+    } catch (_) {}
+    setState(() => _picking = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 16,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: kBorderCol,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Attach Task',
+            style: TextStyle(
+              color: kDarkText,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Type selector
+          SizedBox(
+            height: 80,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: kTaskTypes.length,
+              itemBuilder: (_, i) {
+                final t = kTaskTypes[i];
+                final sel = _type == t.$1;
+                return GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _type = t.$1;
+                      _pickedFileName = null;
+                      _pickedFilePath = null;
+                    });
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    margin: const EdgeInsets.only(right: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: sel ? kPrimaryBlue : kBgLight,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: sel ? kPrimaryBlue : kBorderCol,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(t.$2, style: const TextStyle(fontSize: 22)),
+                        const SizedBox(height: 4),
+                        Text(
+                          t.$3,
+                          style: TextStyle(
+                            color: sel ? Colors.white : kMidText,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 14),
+          // Name field
+          TextField(
+            controller: _nameCtrl,
+            decoration: InputDecoration(
+              hintText: 'Task name / description',
+              filled: true,
+              fillColor: kBgLight,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: kBorderCol),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: kBorderCol),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: kPrimaryBlue, width: 1.5),
+              ),
+            ),
+            style: const TextStyle(
+              color: kDarkText,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 10),
+          // Content area — URL, text, or file picker
+          if (_isUrl)
+            TextField(
+              controller: _contentCtrl,
+              decoration: InputDecoration(
+                hintText: 'https://...',
+                prefixIcon: const Icon(Icons.link_rounded, color: kMidText),
+                filled: true,
+                fillColor: kBgLight,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: kBorderCol),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: kBorderCol),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: kPrimaryBlue, width: 1.5),
+                ),
+              ),
+              style: const TextStyle(color: kDarkText),
+            )
+          else if (_isText)
+            TextField(
+              controller: _contentCtrl,
+              maxLines: 4,
+              decoration: InputDecoration(
+                hintText: 'Write content here...',
+                filled: true,
+                fillColor: kBgLight,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: kBorderCol),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: kBorderCol),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: kPrimaryBlue, width: 1.5),
+                ),
+              ),
+              style: const TextStyle(color: kDarkText),
+            )
+          else
+            GestureDetector(
+              onTap: _picking ? null : _pickFile,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  vertical: 18,
+                  horizontal: 16,
+                ),
+                decoration: BoxDecoration(
+                  color: _pickedFileName != null
+                      ? const Color(0xFFD1FAE5)
+                      : kBgLight,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _pickedFileName != null
+                        ? const Color(0xFF34D399)
+                        : kBorderCol,
+                    width: _pickedFileName != null ? 2 : 1.5,
+                  ),
+                ),
+                child: _picking
+                    ? const Center(
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: kPrimaryBlue,
+                          ),
+                        ),
+                      )
+                    : _pickedFileName != null
+                    ? Row(
+                        children: [
+                          const Icon(
+                            Icons.check_circle_rounded,
+                            color: Color(0xFF059669),
+                            size: 22,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _pickedFileName!,
+                                  style: const TextStyle(
+                                    color: Color(0xFF065F46),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                const Text(
+                                  'File selected — tap to change',
+                                  style: TextStyle(
+                                    color: Color(0xFF059669),
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      )
+                    : Column(
+                        children: [
+                          const Icon(
+                            Icons.cloud_upload_outlined,
+                            size: 32,
+                            color: kMidText,
+                          ),
+                          const SizedBox(height: 6),
+                          const Text(
+                            'Tap to select file',
+                            style: TextStyle(
+                              color: kMidText,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _type == 'voice_note'
+                                ? 'Select audio recording'
+                                : _type == 'audio_file'
+                                ? 'Select audio file'
+                                : _type == 'video_file'
+                                ? 'Select video file'
+                                : 'Select any file',
+                            style: TextStyle(
+                              color: kMidText.withValues(alpha: 0.65),
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              onPressed: () {
+                if (_nameCtrl.text.trim().isEmpty) return;
+                if (_isFile && _pickedFilePath == null) return;
+                final content = _isFile
+                    ? _pickedFilePath!
+                    : _contentCtrl.text.trim();
+                widget.onAdd({
+                  'type': _type,
+                  'name': _nameCtrl.text.trim(),
+                  'content': content,
+                });
+                Navigator.of(context).pop();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kPrimaryBlue,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              child: const Text(
+                'Attach',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PERIOD CARD  (white theme)
+// ═══════════════════════════════════════════════════════════════════════════════
+class PeriodCard extends StatelessWidget {
+  final Period period;
+  final bool isActive;
+  final double fontSize;
+  const PeriodCard({
+    super.key,
+    required this.period,
+    required this.isActive,
+    required this.fontSize,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = pColors(period.type);
+    final isOff = period.type == PeriodType.off;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      decoration: BoxDecoration(
+        color: c.bg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: c.border, width: 1.5),
+        boxShadow: isActive
+            ? [
+                BoxShadow(
+                  color: const Color(0xFFEF4444).withValues(alpha: 0.25),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ]
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.06),
+                  blurRadius: 3,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          children: [
+            // Period number – emphasized
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.black.withValues(alpha: 0.15),
+              ),
+              child: Center(
+                child: Text(
+                  '${period.number}',
+                  style: TextStyle(
+                    color: c.text,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    isOff ? 'Off Period' : period.subject,
+                    style: TextStyle(
+                      color: c.text,
+                      fontSize: fontSize,
+                      fontWeight: FontWeight.w700,
+                      height: 1.1,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    '${_fmt12Tod(period.startTime)} – ${_fmt12Tod(period.endTime)}',
+                    style: TextStyle(
+                      color: c.text.withValues(alpha: 0.65),
+                      fontSize: fontSize - 2,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Class badge – emphasized
+            if (!isOff && period.className.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: c.badge,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  period.className,
+                  style: TextStyle(
+                    color: c.badgeText,
+                    fontSize: fontSize + 1,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            // Type label
+            if (period.type != PeriodType.regular) ...[
+              const SizedBox(width: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  _lbl(period.type),
+                  style: TextStyle(
+                    color: c.text,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ),
+            ],
+            // Tap indicator
+            const SizedBox(width: 4),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: c.text.withValues(alpha: 0.4),
+              size: 16,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _lbl(PeriodType t) {
+    switch (t) {
+      case PeriodType.current:
+        return 'NOW';
+      case PeriodType.off:
+        return 'OFF';
+      case PeriodType.relief:
+        return 'RELIEF';
+      default:
+        return '';
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TIMELINE  (white theme, 12h, large time)
+// ═══════════════════════════════════════════════════════════════════════════════
+class TimetableTimeline extends StatelessWidget {
+  final String currentTime;
+  final int activePeriodIdx, totalPeriods;
+  const TimetableTimeline({
+    super.key,
+    required this.currentTime,
+    required this.activePeriodIdx,
+    required this.totalPeriods,
+  });
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (_, c) {
+      final h = c.maxHeight;
+      final rowH = h / totalPeriods;
+      final mTop = activePeriodIdx * rowH + rowH * 0.5;
+      return Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // Vertical line
+          Positioned(
+            left: 27,
+            top: 0,
+            bottom: 0,
+            child: Container(
+              width: 2,
+              decoration: BoxDecoration(
+                color: const Color(0xFFEF4444).withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(1),
+              ),
+            ),
+          ),
+          // Ticks
+          ...List.generate(
+            totalPeriods,
+            (i) => Positioned(
+              left: 20,
+              top: i * rowH + rowH * 0.5 - 1,
+              child: Container(
+                width: 14,
+                height: 2,
+                decoration: BoxDecoration(
+                  color: kBorderCol,
+                  borderRadius: BorderRadius.circular(1),
+                ),
+              ),
+            ),
+          ),
+          // Arrow + dot
+          Positioned(
+            left: 0,
+            top: mTop - 6,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CustomPaint(size: const Size(8, 12), painter: _Arrow()),
+                Container(width: 8, height: 2, color: const Color(0xFFEF4444)),
+                Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFFEF4444),
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFEF4444).withValues(alpha: 0.4),
+                        blurRadius: 6,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Time label – large, 12h
+          Positioned(
+            left: 0,
+            right: 0,
+            top: mTop + 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEF4444),
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFFEF4444).withValues(alpha: 0.35),
+                    blurRadius: 8,
+                  ),
+                ],
+              ),
+              child: Text(
+                currentTime,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  height: 1.1,
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+class _Arrow extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawPath(
+      Path()
+        ..moveTo(size.width, 0)
+        ..lineTo(0, size.height / 2)
+        ..lineTo(size.width, size.height)
+        ..close(),
+      Paint()..color = const Color(0xFFEF4444),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_Arrow _) => false;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TASKS PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+class TasksPage extends StatefulWidget {
+  const TasksPage({super.key});
+  @override
+  State<TasksPage> createState() => _TasksPageState();
+}
+
+class _TasksPageState extends State<TasksPage> {
+  DateTime _selectedDate = DateTime.now();
+  int? _expandedPeriod;
+
+  static const _months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  static const _days = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+
+  List<Period> get _periods => buildPeriods(_selectedDate);
+
+  Future<void> _pickDate() async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      builder: (ctx, child) => Theme(
+        data: Theme.of(
+          ctx,
+        ).copyWith(colorScheme: const ColorScheme.light(primary: kPrimaryBlue)),
+        child: child!,
+      ),
+    );
+    if (d != null) setState(() => _selectedDate = d);
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: kBgLight,
+    body: SafeArea(
+      child: Column(
+        children: [
+          _buildHeader(),
+          Expanded(child: _buildList()),
+        ],
+      ),
+    ),
+  );
+
+  Widget _buildHeader() => Container(
+    color: Colors.white,
+    padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            GestureDetector(
+              onTap: () => Navigator.of(context).pop(),
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: kBgLight,
+                ),
+                child: const Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  color: kDarkText,
+                  size: 18,
+                ),
+              ),
+            ),
+            const SizedBox(width: 14),
+            const Expanded(
+              child: Text(
+                'Tasks',
+                style: TextStyle(
+                  color: kDarkText,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            _Avatar(name: AppState.name, size: 38, bg: kPrimaryBlue),
+          ],
+        ),
+        const SizedBox(height: 14),
+        GestureDetector(
+          onTap: _pickDate,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: kBgLight,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: kBorderCol),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.calendar_today_rounded,
+                  color: kPrimaryBlue,
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _days[_selectedDate.weekday - 1],
+                        style: const TextStyle(
+                          color: kMidText,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      Text(
+                        '${_selectedDate.day} ${_months[_selectedDate.month - 1]} ${_selectedDate.year}',
+                        style: const TextStyle(
+                          color: kDarkText,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.arrow_drop_down_rounded, color: kMidText),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildList() => ListView.builder(
+    padding: const EdgeInsets.all(16),
+    itemCount: _periods.length,
+    itemBuilder: (_, i) {
+      final p = _periods[i];
+      final c = pColors(p.type);
+      final taskList = AppState.getTasksFor(_selectedDate, i);
+      final expanded = _expandedPeriod == i;
+      return Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: kBorderCol),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            GestureDetector(
+              onTap: () =>
+                  setState(() => _expandedPeriod = expanded ? null : i),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: c.bg,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: c.border),
+                      ),
+                      child: Center(
+                        child: Text(
+                          '${p.number}',
+                          style: TextStyle(
+                            color: c.text,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            p.type == PeriodType.off ? 'Off Period' : p.subject,
+                            style: const TextStyle(
+                              color: kDarkText,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          Text(
+                            '${_fmt12Tod(p.startTime)} – ${_fmt12Tod(p.endTime)} ${p.className.isNotEmpty ? '· ${p.className}' : ''}',
+                            style: const TextStyle(
+                              color: kMidText,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (taskList.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: kPrimaryBlue.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          '${taskList.length}',
+                          style: const TextStyle(
+                            color: kPrimaryBlue,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      expanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      color: kMidText,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (expanded) ...[
+              Divider(color: kBorderCol, height: 1),
+              ...taskList.asMap().entries.map((e) {
+                final t = e.value;
+                return ListTile(
+                  dense: true,
+                  leading: const Icon(
+                    Icons.attach_file_rounded,
+                    color: kPrimaryBlue,
+                    size: 18,
+                  ),
+                  title: Text(
+                    t['name'] ?? '',
+                    style: const TextStyle(
+                      color: kDarkText,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text(
+                    t['content'] ?? '',
+                    style: const TextStyle(color: kMidText, fontSize: 11),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(
+                      Icons.delete_outline_rounded,
+                      color: Color(0xFFEF4444),
+                      size: 18,
+                    ),
+                    onPressed: () {
+                      AppState.removeTask(_selectedDate, i, e.key);
+                      setState(() {});
+                    },
+                  ),
+                );
+              }),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 40,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      showModalBottomSheet(
+                        context: context,
+                        isScrollControlled: true,
+                        backgroundColor: Colors.transparent,
+                        builder: (ctx) => AddTaskSheet(
+                          onAdd: (t) {
+                            AppState.addTask(_selectedDate, i, t);
+                            setState(() {});
+                          },
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.add_rounded, size: 18),
+                    label: const Text(
+                      'Add Task',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: kPrimaryBlue,
+                      side: const BorderSide(color: kPrimaryBlue),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    },
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCHEDULE PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+class SchedulePage extends StatefulWidget {
+  const SchedulePage({super.key});
+  @override
+  State<SchedulePage> createState() => _SchedulePageState();
+}
+
+class _SchedulePageState extends State<SchedulePage>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabs;
+  late DateTime _today;
+  late DateTime _weekStart;
+  static const _dayNames = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _today = DateTime.now();
+    _weekStart = _today.subtract(Duration(days: _today.weekday - 1));
+    final todayTab = (_today.weekday - 1).clamp(0, 4);
+    _tabs = TabController(length: 5, vsync: this, initialIndex: todayTab);
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  DateTime _dateForTab(int tab) => _weekStart.add(Duration(days: tab));
+  String _dk(DateTime d) => AppState.dateKey(d);
+  bool _isToday(int tab) {
+    final d = _dateForTab(tab);
+    return d.year == _today.year &&
+        d.month == _today.month &&
+        d.day == _today.day;
+  }
+
+  void _toggleRelief(int tab, int idx) {
+    final k = _dk(_dateForTab(tab));
+    setState(() {
+      AppState.reliefMap.putIfAbsent(k, () => {});
+      if (AppState.reliefMap[k]!.contains(idx)) {
+        AppState.reliefMap[k]!.remove(idx);
+      } else {
+        AppState.reliefMap[k]!.add(idx);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: kBgLight,
+    body: SafeArea(
+      child: Column(
+        children: [
+          _buildHeader(),
+          const SizedBox(height: 8),
+          _buildWeekNav(),
+          const SizedBox(height: 6),
+          _buildTabs(),
+          const SizedBox(height: 6),
+          Expanded(
+            child: TabBarView(
+              controller: _tabs,
+              children: List.generate(5, (tab) => _buildDayView(tab)),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _buildHeader() => Container(
+    color: Colors.white,
+    padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+    child: Row(
+      children: [
+        GestureDetector(
+          onTap: () => Navigator.of(context).pop(),
+          child: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: kBgLight),
+            child: const Icon(
+              Icons.arrow_back_ios_new_rounded,
+              color: kDarkText,
+              size: 18,
+            ),
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Weekly Schedule',
+                style: TextStyle(
+                  color: kDarkText,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const Text(
+                'Tap a period to assign or remove relief',
+                style: TextStyle(color: kMidText, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        _Avatar(name: AppState.name, size: 38, bg: kPrimaryBlue),
+      ],
+    ),
+  );
+
+  Widget _buildWeekNav() {
+    String fmt(DateTime d) =>
+        '${d.day} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.month - 1]}';
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: () => setState(
+              () => _weekStart = _weekStart.subtract(const Duration(days: 7)),
+            ),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: kBgLight,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kBorderCol),
+              ),
+              child: const Icon(Icons.chevron_left, color: kDarkText, size: 20),
+            ),
+          ),
+          Expanded(
+            child: Center(
+              child: Text(
+                '${fmt(_weekStart)} – ${fmt(_weekStart.add(const Duration(days: 6)))}',
+                style: const TextStyle(
+                  color: kDarkText,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+          GestureDetector(
+            onTap: () => setState(
+              () => _weekStart = _weekStart.add(const Duration(days: 7)),
+            ),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: kBgLight,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kBorderCol),
+              ),
+              child: const Icon(
+                Icons.chevron_right,
+                color: kDarkText,
+                size: 20,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabs() => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    child: Container(
+      decoration: BoxDecoration(
+        color: kBgLight,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kBorderCol),
+      ),
+      child: TabBar(
+        controller: _tabs,
+        isScrollable: false,
+        indicator: BoxDecoration(
+          color: kPrimaryBlue,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        indicatorSize: TabBarIndicatorSize.tab,
+        indicatorPadding: const EdgeInsets.all(4),
+        dividerColor: Colors.transparent,
+        labelColor: Colors.white,
+        unselectedLabelColor: kMidText,
+        labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+        tabs: List.generate(5, (i) {
+          final today = _isToday(i);
+          return Tab(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(_dayNames[i].substring(0, 3)),
+                if (today)
+                  Container(
+                    width: 5,
+                    height: 5,
+                    margin: const EdgeInsets.only(top: 2),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFEF4444),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+              ],
+            ),
+          );
+        }),
+      ),
+    ),
+  );
+
+  Widget _buildDayView(int tab) {
+    final date = _dateForTab(tab);
+    final dk = _dk(date);
+    final relieved = AppState.reliefMap[dk] ?? {};
+    final isToday = _isToday(tab);
+    final n = AppState.periods > 0 ? AppState.periods : 8;
+    final start = AppState.firstStart ?? const TimeOfDay(hour: 7, minute: 30);
+    final dur = AppState.duration > 0 ? AppState.duration : 40;
+    final intS = AppState.intervalStart;
+    final intE = AppState.intervalEnd;
+    final saved = AppState.timetable.length > tab
+        ? AppState.timetable[tab]
+        : <Map<String, String>>[];
+
+    final List<Map<String, dynamic>> sched = [];
+    int cur = _toMin(start);
+    for (int i = 0; i < n; i++) {
+      if (intS != null && intE != null && cur == _toMin(intS)) {
+        cur = _toMin(intE);
+      }
+      final ps = TimeOfDay(hour: cur ~/ 60, minute: cur % 60);
+      final end = cur + dur;
+      final pe = TimeOfDay(hour: end ~/ 60, minute: end % 60);
+      final m = i < saved.length ? saved[i] : <String, String>{};
+      sched.add({
+        'index': i,
+        'number': i + 1,
+        'subject': m['subject'] ?? '',
+        'class': m['class'] ?? '',
+        'isOff': (m['subject'] ?? '').isEmpty || (m['type'] ?? '') == 'off',
+        'isRelief': relieved.contains(i),
+        'startTime': ps,
+        'endTime': pe,
+      });
+      cur = end;
+    }
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: isToday ? kPrimaryBlue : kBgLight,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isToday ? kPrimaryBlue : kBorderCol,
+                  ),
+                ),
+                child: Text(
+                  '${_dayNames[tab]}, ${date.day} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][date.month - 1]}',
+                  style: TextStyle(
+                    color: isToday ? Colors.white : kMidText,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              if (relieved.isNotEmpty) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF9C3),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '${relieved.length} relief',
+                    style: const TextStyle(
+                      color: Color(0xFF78350F),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => setState(() => AppState.reliefMap.remove(dk)),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: kBgLight,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: kBorderCol),
+                    ),
+                    child: const Text(
+                      'Clear all',
+                      style: TextStyle(
+                        color: kMidText,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            itemCount: sched.length,
+            itemBuilder: (_, i) {
+              final s = sched[i];
+              final isOff = s['isOff'] as bool;
+              final isRelief = s['isRelief'] as bool;
+              Color bg, border, tc;
+              if (isOff) {
+                bg = const Color(0xFFE8E8EA);
+                border = const Color(0xFFCBCBD0);
+                tc = const Color(0xFF5C5C6E);
+              } else if (isRelief) {
+                bg = const Color(0xFFFEF9C3);
+                border = const Color(0xFFFDE68A);
+                tc = const Color(0xFF78350F);
+              } else if ((s['subject'] as String).isNotEmpty &&
+                  (s['class'] as String).isNotEmpty) {
+                bg = const Color(0xFFD1FAE5);
+                border = const Color(0xFF6EE7B7);
+                tc = const Color(0xFF065F46);
+              } else {
+                bg = Colors.white;
+                border = kBorderCol;
+                tc = kDarkText;
+              }
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: border, width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.05),
+                      blurRadius: 3,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.black.withValues(alpha: 0.1),
+                        ),
+                        child: Center(
+                          child: Text(
+                            '${s['number']}',
+                            style: TextStyle(
+                              color: tc,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              isOff
+                                  ? 'Off Period'
+                                  : isRelief
+                                  ? 'Relief'
+                                  : '${s['subject']}',
+                              style: TextStyle(
+                                color: tc,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              '${_fmt12Tod(s['startTime'] as TimeOfDay)} – ${_fmt12Tod(s['endTime'] as TimeOfDay)}',
+                              style: TextStyle(
+                                color: tc.withValues(alpha: 0.65),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (!isOff &&
+                          (s['class'] as String).isNotEmpty &&
+                          !isRelief)
+                        Container(
+                          margin: const EdgeInsets.only(right: 10),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF34D399),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            s['class'] as String,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      if (!isOff)
+                        GestureDetector(
+                          onTap: () => _toggleRelief(tab, s['index'] as int),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 7,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isRelief
+                                  ? const Color(0xFFFBBF24)
+                                  : Colors.white.withValues(alpha: 0.6),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: isRelief
+                                    ? const Color(0xFFFBBF24)
+                                    : Colors.black.withValues(alpha: 0.15),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  isRelief
+                                      ? Icons.swap_horiz_rounded
+                                      : Icons.swap_horiz_outlined,
+                                  color: isRelief
+                                      ? Colors.white
+                                      : tc.withValues(alpha: 0.7),
+                                  size: 14,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  isRelief ? 'Relief ✓' : 'Set Relief',
+                                  style: TextStyle(
+                                    color: isRelief
+                                        ? Colors.white
+                                        : tc.withValues(alpha: 0.8),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STUDENT MANAGEMENT PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+class StudentManagementPage extends StatefulWidget {
+  const StudentManagementPage({super.key});
+  @override
+  State<StudentManagementPage> createState() => _StudentManagementPageState();
+}
+
+class _StudentManagementPageState extends State<StudentManagementPage> {
+  String? _selectedClass;
+  final _nameCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  // Combine timetable classes with any manually created ones
+  List<String> get _classes {
+    final Set<String> all = {...AppState.allClasses, ...AppState.students.keys};
+    return all.toList()..sort();
+  }
+
+  List<String> get _studentList => AppState.students[_selectedClass] ?? [];
+
+  void _addClass(String cls) {
+    if (cls.isEmpty) return;
+    AppState.students.putIfAbsent(cls, () => []);
+    setState(() => _selectedClass = cls);
+  }
+
+  void _showAddClassDialog() {
+    final ctrl = TextEditingController();
+    final ttClasses =
+        AppState.allClasses.where((c) => !_classes.contains(c) || true).toList()
+          ..sort();
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          title: const Text(
+            'Add Class',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (ttClasses.isNotEmpty) ...[
+                const Text(
+                  'From your timetable:',
+                  style: TextStyle(
+                    color: kMidText,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: ttClasses
+                      .map(
+                        (c) => GestureDetector(
+                          onTap: () {
+                            _addClass(c);
+                            Navigator.pop(ctx);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: kPrimaryBlue,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              c,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+                const SizedBox(height: 14),
+                const Divider(),
+                const SizedBox(height: 8),
+              ],
+              const Text(
+                'Or type a new class name:',
+                style: TextStyle(
+                  color: kMidText,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: ctrl,
+                autofocus: ttClasses.isEmpty,
+                textCapitalization: TextCapitalization.characters,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[A-Z0-9]')),
+                ],
+                decoration: InputDecoration(
+                  hintText: 'e.g. 10C',
+                  filled: true,
+                  fillColor: kBgLight,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: kBorderCol),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: kBorderCol),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(
+                      color: kPrimaryBlue,
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: kPrimaryBlue,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              onPressed: () {
+                _addClass(ctrl.text.trim());
+                Navigator.pop(ctx);
+              },
+              child: const Text('Add'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _addStudent() {
+    if (_nameCtrl.text.trim().isEmpty || _selectedClass == null) return;
+    AppState.students[_selectedClass]!.add(_nameCtrl.text.trim());
+    _nameCtrl.clear();
+    setState(() {});
+  }
+
+  void _deleteStudent(int i) {
+    AppState.students[_selectedClass]!.removeAt(i);
+    setState(() {});
+  }
+
+  void _editStudent(int i) {
+    final ctrl = TextEditingController(text: _studentList[i]);
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Edit Name'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Student name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (ctrl.text.trim().isNotEmpty) {
+                AppState.students[_selectedClass]![i] = ctrl.text.trim();
+                setState(() {});
+              }
+              Navigator.pop(context);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: kBgLight,
+    body: SafeArea(
+      child: Column(
+        children: [
+          // Header
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: kBgLight,
+                    ),
+                    child: const Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      color: kDarkText,
+                      size: 18,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Text(
+                    'Student Names',
+                    style: TextStyle(
+                      color: kDarkText,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Class list panel
+                Container(
+                  width: 110,
+                  color: Colors.white,
+                  child: Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text(
+                          'Classes',
+                          style: TextStyle(
+                            color: kMidText,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: _classes.isEmpty
+                            ? Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(
+                                      Icons.school_outlined,
+                                      color: kBorderCol,
+                                      size: 28,
+                                    ),
+                                    const SizedBox(height: 6),
+                                    const Text(
+                                      'No classes\nyet',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        color: kMidText,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    GestureDetector(
+                                      onTap: () => _showAddClassDialog(),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 6,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: kPrimaryBlue,
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                        ),
+                                        child: const Text(
+                                          '+ Add',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : ListView.builder(
+                                itemCount: _classes.length,
+                                itemBuilder: (_, i) {
+                                  final cls = _classes[i];
+                                  final sel = cls == _selectedClass;
+                                  return GestureDetector(
+                                    onTap: () =>
+                                        setState(() => _selectedClass = cls),
+                                    child: Container(
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 10,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: sel ? kPrimaryBlue : kBgLight,
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          Text(
+                                            cls,
+                                            style: TextStyle(
+                                              color: sel
+                                                  ? Colors.white
+                                                  : kDarkText,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                          Text(
+                                            '${AppState.students[cls]?.length ?? 0}',
+                                            style: TextStyle(
+                                              color: sel
+                                                  ? Colors.white70
+                                                  : kMidText,
+                                              fontSize: 10,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                      // Add class button
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: GestureDetector(
+                          onTap: () => _showAddClassDialog(),
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            decoration: BoxDecoration(
+                              color: kPrimaryBlue.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: kPrimaryBlue.withValues(alpha: 0.3),
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.add_rounded,
+                              color: kPrimaryBlue,
+                              size: 20,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const VerticalDivider(width: 1, color: Color(0xFFE8EAF6)),
+                // Student list panel
+                Expanded(
+                  child: _selectedClass == null
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.people_outline_rounded,
+                                size: 48,
+                                color: kBorderCol,
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'Select a class',
+                                style: TextStyle(
+                                  color: kMidText,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : Column(
+                          children: [
+                            // Add student row
+                            Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: TextField(
+                                      controller: _nameCtrl,
+                                      decoration: InputDecoration(
+                                        hintText: 'Student name',
+                                        filled: true,
+                                        fillColor: Colors.white,
+                                        border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          borderSide: BorderSide(
+                                            color: kBorderCol,
+                                          ),
+                                        ),
+                                        enabledBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          borderSide: BorderSide(
+                                            color: kBorderCol,
+                                          ),
+                                        ),
+                                        focusedBorder: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          borderSide: const BorderSide(
+                                            color: kPrimaryBlue,
+                                            width: 1.5,
+                                          ),
+                                        ),
+                                        isDense: true,
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 12,
+                                            ),
+                                      ),
+                                      textCapitalization:
+                                          TextCapitalization.words,
+                                      textInputAction: TextInputAction.done,
+                                      onSubmitted: (_) => _addStudent(),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  GestureDetector(
+                                    onTap: _addStudent,
+                                    child: Container(
+                                      width: 42,
+                                      height: 42,
+                                      decoration: BoxDecoration(
+                                        color: kPrimaryBlue,
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: const Icon(
+                                        Icons.person_add_rounded,
+                                        color: Colors.white,
+                                        size: 20,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            // Excel upload hint
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+                              child: GestureDetector(
+                                // ignore: avoid_print
+                                onTap: () => print(
+                                  'TODO: integrate excel package for bulk upload',
+                                ),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE8F5E9),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: const Color(0xFFA5D6A7),
+                                    ),
+                                  ),
+                                  child: const Row(
+                                    children: [
+                                      Icon(
+                                        Icons.table_chart_outlined,
+                                        color: Color(0xFF2E7D32),
+                                        size: 18,
+                                      ),
+                                      SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          'Upload from Excel file',
+                                          style: TextStyle(
+                                            color: Color(0xFF2E7D32),
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      Icon(
+                                        Icons.file_upload_outlined,
+                                        color: Color(0xFF2E7D32),
+                                        size: 16,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    '$_selectedClass — ${_studentList.length} students',
+                                    style: const TextStyle(
+                                      color: kMidText,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Expanded(
+                              child: _studentList.isEmpty
+                                  ? Center(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.person_add_outlined,
+                                            size: 40,
+                                            color: kBorderCol,
+                                          ),
+                                          const SizedBox(height: 10),
+                                          Text(
+                                            'No students in $_selectedClass',
+                                            style: const TextStyle(
+                                              color: kMidText,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  : ReorderableListView.builder(
+                                      padding: const EdgeInsets.fromLTRB(
+                                        14,
+                                        0,
+                                        14,
+                                        14,
+                                      ),
+                                      itemCount: _studentList.length,
+                                      onReorderItem: (oldIndex, newIndex) {
+                                        setState(() {
+                                          final item = AppState
+                                              .students[_selectedClass]!
+                                              .removeAt(oldIndex);
+                                          AppState.students[_selectedClass]!
+                                              .insert(newIndex, item);
+                                        });
+                                      },
+                                      itemBuilder: (_, i) {
+                                        final name = _studentList[i];
+                                        return Container(
+                                          key: ValueKey('$_selectedClass-$i'),
+                                          margin: const EdgeInsets.only(
+                                            bottom: 8,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
+                                            border: Border.all(
+                                              color: kBorderCol,
+                                            ),
+                                            boxShadow: [
+                                              BoxShadow(
+                                                color: Colors.black.withValues(
+                                                  alpha: 0.03,
+                                                ),
+                                                blurRadius: 3,
+                                              ),
+                                            ],
+                                          ),
+                                          child: ListTile(
+                                            dense: true,
+                                            leading: CircleAvatar(
+                                              backgroundColor: kPrimaryBlue
+                                                  .withValues(alpha: 0.1),
+                                              radius: 16,
+                                              child: Text(
+                                                name[0].toUpperCase(),
+                                                style: const TextStyle(
+                                                  color: kPrimaryBlue,
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                              ),
+                                            ),
+                                            title: Text(
+                                              name,
+                                              style: const TextStyle(
+                                                color: kDarkText,
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            trailing: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                IconButton(
+                                                  icon: const Icon(
+                                                    Icons.edit_outlined,
+                                                    size: 18,
+                                                    color: kMidText,
+                                                  ),
+                                                  onPressed: () =>
+                                                      _editStudent(i),
+                                                ),
+                                                IconButton(
+                                                  icon: const Icon(
+                                                    Icons
+                                                        .delete_outline_rounded,
+                                                    size: 18,
+                                                    color: Color(0xFFEF4444),
+                                                  ),
+                                                  onPressed: () =>
+                                                      _deleteStudent(i),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                            ),
+                          ],
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SETTINGS PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key});
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  late TextEditingController _nameCtrl, _periodsCtrl, _durationCtrl;
+  String _gender = '';
+  TimeOfDay? _fs, _le, _is, _ie;
+  late double _fontSize;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: AppState.name);
+    _periodsCtrl = TextEditingController(text: '${AppState.periods}');
+    _durationCtrl = TextEditingController(text: '${AppState.duration}');
+    _gender = AppState.gender;
+    _fs = AppState.firstStart;
+    _le = AppState.lastEnd;
+    _is = AppState.intervalStart;
+    _ie = AppState.intervalEnd;
+    _fontSize = AppState.fontSizeNotifier.value;
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _periodsCtrl.dispose();
+    _durationCtrl.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    AppState.name = _nameCtrl.text.trim();
+    AppState.gender = _gender;
+    AppState.periods = int.tryParse(_periodsCtrl.text) ?? AppState.periods;
+    AppState.duration = int.tryParse(_durationCtrl.text) ?? AppState.duration;
+    AppState.firstStart = _fs;
+    AppState.lastEnd = _le;
+    AppState.intervalStart = _is;
+    AppState.intervalEnd = _ie;
+    AppState.fontSizeNotifier.value = _fontSize;
+    Navigator.of(context).pop();
+  }
+
+  Future<TimeOfDay?> _pickTime(TimeOfDay? init) => showTimePicker(
+    context: context,
+    initialTime: init ?? const TimeOfDay(hour: 7, minute: 30),
+    builder: (ctx, child) => Theme(
+      data: Theme.of(
+        ctx,
+      ).copyWith(colorScheme: const ColorScheme.light(primary: kPrimaryBlue)),
+      child: child!,
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: kBgLight,
+    body: SafeArea(
+      child: Column(
+        children: [
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => Navigator.of(context).pop(),
+                  child: Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: kBgLight,
+                    ),
+                    child: const Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      color: kDarkText,
+                      size: 18,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Text(
+                    'Settings',
+                    style: TextStyle(
+                      color: kDarkText,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: _save,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kPrimaryBlue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 10,
+                    ),
+                  ),
+                  child: const Text(
+                    'Save',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Profile section
+                  _sec('👤  Profile'),
+                  _card(
+                    child: Column(
+                      children: [
+                        Center(
+                          child: Stack(
+                            children: [
+                              Container(
+                                width: 72,
+                                height: 72,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: kPrimaryBlue,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: kPrimaryBlue.withValues(
+                                        alpha: 0.3,
+                                      ),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 3),
+                                    ),
+                                  ],
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    AppState.name.isNotEmpty
+                                        ? AppState.name[0].toUpperCase()
+                                        : 'T',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 30,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Container(
+                                  width: 24,
+                                  height: 24,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.white,
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black12,
+                                        blurRadius: 4,
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Icon(
+                                    Icons.camera_alt_rounded,
+                                    size: 14,
+                                    color: kPrimaryBlue,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        const Center(
+                          child: Text(
+                            'Tap to change photo',
+                            style: TextStyle(color: kMidText, fontSize: 11),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        _field(
+                          'Preferred Name',
+                          _nameCtrl,
+                          icon: Icons.person_outline_rounded,
+                        ),
+                        const SizedBox(height: 14),
+                        _lbl('Gender'),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: ['Male', 'Female', 'Other']
+                              .map(
+                                (g) => Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: GestureDetector(
+                                      onTap: () => setState(() => _gender = g),
+                                      child: AnimatedContainer(
+                                        duration: const Duration(
+                                          milliseconds: 180,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 10,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: _gender == g
+                                              ? kPrimaryBlue
+                                              : kBgLight,
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          border: Border.all(
+                                            color: _gender == g
+                                                ? kPrimaryBlue
+                                                : kBorderCol,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          g,
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: _gender == g
+                                                ? Colors.white
+                                                : kDarkText,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Schedule
+                  _sec('📅  Schedule'),
+                  _card(
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _field(
+                                'Periods / Day',
+                                _periodsCtrl,
+                                keyboard: TextInputType.number,
+                                icon: Icons.format_list_numbered_rounded,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _field(
+                                'Duration (min)',
+                                _durationCtrl,
+                                keyboard: TextInputType.number,
+                                icon: Icons.timer_outlined,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        _timeRow('First Period Start', _fs, () async {
+                          final t = await _pickTime(_fs);
+                          if (t != null) setState(() => _fs = t);
+                        }),
+                        _timeRow('Last Period End', _le, () async {
+                          final t = await _pickTime(_le);
+                          if (t != null) setState(() => _le = t);
+                        }),
+                        _timeRow('Interval Start', _is, () async {
+                          final t = await _pickTime(_is);
+                          if (t != null) setState(() => _is = t);
+                        }),
+                        _timeRow('Interval End', _ie, () async {
+                          final t = await _pickTime(_ie);
+                          if (t != null) setState(() => _ie = t);
+                        }),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Student names
+                  _sec('👥  Student Names'),
+                  _actionBtn(
+                    'Manage Student Names',
+                    Icons.people_rounded,
+                    () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const StudentManagementPage(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Display
+                  _sec('🎨  Display'),
+                  _card(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _lbl('Font Size'),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            const Text(
+                              'A',
+                              style: TextStyle(color: kMidText, fontSize: 12),
+                            ),
+                            Expanded(
+                              child: Slider(
+                                value: _fontSize,
+                                min: 11,
+                                max: 18,
+                                divisions: 7,
+                                activeColor: kPrimaryBlue,
+                                inactiveColor: kBorderCol,
+                                thumbColor: kPrimaryBlue,
+                                onChanged: (v) => setState(() => _fontSize = v),
+                              ),
+                            ),
+                            const Text(
+                              'A',
+                              style: TextStyle(
+                                color: kDarkText,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Center(
+                          child: Text(
+                            '${_fontSize.round()}px preview',
+                            style: TextStyle(
+                              color: kMidText,
+                              fontSize: _fontSize,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Timetable edit
+                  _sec('📋  Timetable'),
+                  _actionBtn(
+                    'Edit My Timetable',
+                    Icons.edit_calendar_rounded,
+                    () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const TimetableSetupPage(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _sec(String t) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Text(
+      t,
+      style: const TextStyle(
+        color: kDarkText,
+        fontSize: 14,
+        fontWeight: FontWeight.w800,
+      ),
+    ),
+  );
+
+  Widget _card({required Widget child}) => Container(
+    margin: const EdgeInsets.only(bottom: 0),
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: kBorderCol),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.04),
+          blurRadius: 4,
+          offset: const Offset(0, 2),
+        ),
+      ],
+    ),
+    child: child,
+  );
+
+  Widget _field(
+    String label,
+    TextEditingController ctrl, {
+    TextInputType keyboard = TextInputType.text,
+    IconData? icon,
+  }) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      _lbl(label),
+      const SizedBox(height: 6),
+      TextField(
+        controller: ctrl,
+        keyboardType: keyboard,
+        style: const TextStyle(
+          color: kDarkText,
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+        ),
+        decoration: InputDecoration(
+          prefixIcon: icon != null
+              ? Icon(icon, color: kMidText, size: 18)
+              : null,
+          isDense: true,
+          filled: true,
+          fillColor: kBgLight,
+          contentPadding: const EdgeInsets.symmetric(
+            vertical: 12,
+            horizontal: 14,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: kBorderCol),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: kBorderCol),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: kPrimaryBlue, width: 1.5),
+          ),
+        ),
+      ),
+    ],
+  );
+
+  Widget _lbl(String t) => Text(
+    t,
+    style: const TextStyle(
+      color: kMidText,
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+    ),
+  );
+
+  Widget _timeRow(String label, TimeOfDay? time, VoidCallback onTap) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: kMidText,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: kBgLight,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: kBorderCol),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.access_time_rounded,
+                  color: kMidText,
+                  size: 15,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  time != null ? _fmt12Tod(time) : 'Tap to set',
+                  style: TextStyle(
+                    color: time != null ? kDarkText : kMidText,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _actionBtn(String label, IconData icon, VoidCallback onTap) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: kBorderCol),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: kPrimaryBlue.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: kPrimaryBlue, size: 20),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    color: kDarkText,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: kMidText),
+            ],
+          ),
+        ),
+      );
+}
