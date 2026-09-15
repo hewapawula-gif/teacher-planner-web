@@ -464,22 +464,23 @@ function Dashboard({ data, onDisconnect }: { data: ConnectData; onDisconnect: ()
   );
 }
 
-// ── Force-download a URL (works for PDFs, avoids browser inline preview) ──────
-async function forceDownload(url: string, filename: string) {
-  try {
-    const res = await fetch(url);
-    const blob = await res.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = blobUrl;
+// ── Force-download a URL ───────────────────────────────────────────────────────
+// For Supabase Storage URLs, append ?download= so the server sets
+// Content-Disposition: attachment — no CORS/fetch needed.
+// For WiFi local server URLs, use a plain <a download> click.
+function forceDownload(url: string, filename: string) {
+  const a = document.createElement("a");
+  if (url.includes("supabase.co/storage")) {
+    a.href = `${url}?download=${encodeURIComponent(filename)}`;
+  } else {
+    a.href = url;
     a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, 1000);
-  } catch {
-    // fallback: open in new tab
-    window.open(url, "_blank");
   }
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => document.body.removeChild(a), 500);
 }
 
 // ── Root App ──────────────────────────────────────────────────────────────────
@@ -514,10 +515,9 @@ export default function App() {
   }, [sessionId]);
 
   const disconnect = useCallback(async () => {
-    // Delete session row from Supabase so data doesn't linger
-    try {
-      await supabase.from("sessions").delete().eq("id", sessionId);
-    } catch (_) {}
+    // Delete session row — requires "Anyone can delete" policy on sessions table
+    const { error } = await supabase.from("sessions").delete().eq("id", sessionId);
+    if (error) console.error("Session delete failed:", error.message);
     setConnectData(null);
     setPhase("waiting");
   }, [sessionId]);
