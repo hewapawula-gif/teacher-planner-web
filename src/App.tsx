@@ -264,8 +264,9 @@ function Sidebar({ data, onDisconnect }: { data: ConnectData; onDisconnect: () =
               const fileUrl = data.serverUrl
                 ? `${data.serverUrl}/files/${encodeURIComponent(t.content.split("/").pop() ?? t.content)}`
                 : t.content;
+              const fileName = t.content.split("/").pop() ?? t.name;
               return (
-                <a key={i} href={fileUrl} target="_blank" rel="noopener noreferrer"
+                <div key={i} onClick={() => forceDownload(fileUrl, fileName)}
                   className="flex items-center gap-3 rounded-xl px-3 py-2.5 border border-white/10 hover:bg-white/10 transition-all cursor-pointer group"
                   style={{ background: "rgba(255,255,255,0.04)" }}>
                   <span className="text-base flex-shrink-0">{m.icon}</span>
@@ -274,7 +275,7 @@ function Sidebar({ data, onDisconnect }: { data: ConnectData; onDisconnect: () =
                     <p className="text-white/40 text-[10px] font-semibold">Period {t.period.number}</p>
                   </div>
                   <span className="text-white/30 group-hover:text-white/70 transition-colors">↓</span>
-                </a>
+                </div>
               );
             })}
           </div>
@@ -374,9 +375,10 @@ function DetailPanel({ period, serverUrl }: { period: Period; serverUrl?: string
               const m = taskMeta(t.type);
               const canOpen = t.type === "video_link" || (isDownloadable(t.type) && (serverUrl || t.content.startsWith("http")));
               const fileUrl = serverUrl ? `${serverUrl}/files/${encodeURIComponent(t.content.split("/").pop() ?? t.content)}` : t.content;
+              const fileName = t.content.split("/").pop() ?? t.name;
               const handleOpen = () => {
-                if (t.type === "video_link") window.open(t.content, "_blank");
-                else if (canOpen) window.open(fileUrl, "_blank");
+                if (t.type === "video_link") { window.open(t.content, "_blank"); return; }
+                if (canOpen) forceDownload(fileUrl, fileName);
               };
               return (
                 <div key={i} onClick={handleOpen}
@@ -462,6 +464,24 @@ function Dashboard({ data, onDisconnect }: { data: ConnectData; onDisconnect: ()
   );
 }
 
+// ── Force-download a URL (works for PDFs, avoids browser inline preview) ──────
+async function forceDownload(url: string, filename: string) {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(blobUrl); }, 1000);
+  } catch {
+    // fallback: open in new tab
+    window.open(url, "_blank");
+  }
+}
+
 // ── Root App ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [phase, setPhase] = useState<Phase>("waiting");
@@ -493,10 +513,14 @@ export default function App() {
     return () => { supabase.removeChannel(channel); };
   }, [sessionId]);
 
-  const disconnect = useCallback(() => {
+  const disconnect = useCallback(async () => {
+    // Delete session row from Supabase so data doesn't linger
+    try {
+      await supabase.from("sessions").delete().eq("id", sessionId);
+    } catch (_) {}
     setConnectData(null);
     setPhase("waiting");
-  }, []);
+  }, [sessionId]);
 
   if (phase === "waiting") return <WaitingScreen sessionId={sessionId} />;
   if (phase === "connecting") return <ConnectingScreen />;
