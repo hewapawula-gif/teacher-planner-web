@@ -54,7 +54,13 @@ function taskMeta(type: string) {
 }
 
 function isDownloadable(type: string) {
-  return ["video_file", "audio_file", "voice_note"].includes(type);
+  return ["video_file", "audio_file", "voice_note", "lesson_plan", "teaching_material"].includes(type);
+}
+
+// A task has a downloadable file if its content is a URL (cloud or local server)
+// rather than plain typed text
+function hasFileContent(task: Task) {
+  return task.content.startsWith("http") || task.content.includes("/");
 }
 
 // ── UUID generator ────────────────────────────────────────────────────────────
@@ -199,7 +205,7 @@ function ConnectingScreen() {
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({ data, onDisconnect }: { data: ConnectData; onDisconnect: () => void }) {
   const allTasks = data.periods.flatMap(p => p.tasks.map(t => ({ ...t, period: p })));
-  const files = allTasks.filter(t => isDownloadable(t.type));
+  const files = allTasks.filter(t => isDownloadable(t.type) && hasFileContent(t));
   const initial = data.teacher.name?.[0]?.toUpperCase() ?? "T";
 
   return (
@@ -373,7 +379,7 @@ function DetailPanel({ period, serverUrl }: { period: Period; serverUrl?: string
           <div className="space-y-3">
             {period.tasks.map((t, i) => {
               const m = taskMeta(t.type);
-              const canOpen = t.type === "video_link" || (isDownloadable(t.type) && (serverUrl || t.content.startsWith("http")));
+              const canOpen = t.type === "video_link" || (isDownloadable(t.type) && hasFileContent(t) && (serverUrl || t.content.startsWith("http")));
               const fileUrl = serverUrl ? `${serverUrl}/files/${encodeURIComponent(t.content.split("/").pop() ?? t.content)}` : t.content;
               const fileName = t.content.split("/").pop() ?? t.name;
               const handleOpen = () => {
@@ -396,7 +402,7 @@ function DetailPanel({ period, serverUrl }: { period: Period; serverUrl?: string
                       <span className="text-xs font-bold" style={{ color: m.color }}>{t.type === "video_link" ? "↗" : "↓"}</span>
                     </div>
                   )}
-                  {!canOpen && t.type !== "video_link" && (
+                  {!canOpen && t.type !== "video_link" && hasFileContent(t) && (
                     <span className="text-[10px] text-slate-400 font-semibold">Enable server to download</span>
                   )}
                 </div>
