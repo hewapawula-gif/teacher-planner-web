@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -10,12 +9,11 @@ import 'package:open_filex/open_filex.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── REPLACE THESE with your real Supabase credentials ─────────────────────────
 const _kSupabaseUrl = 'https://jmtbmtqmqpcggbaacxwk.supabase.co';
-const _kSupabasePublishableKey =
+const _kSupabaseAnonKey =
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImptdGJtdHFtcXBjZ2diYWFjeHdrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3NzcwMTUsImV4cCI6MjEwNDM1MzAxNX0.ROvaT3Npl2yA1zvqd-z0NoOaDeMdMyCzat5a_e51hIc';
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -23,9 +21,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Supabase.initialize(
     url: _kSupabaseUrl,
-    publishableKey: _kSupabasePublishableKey,
+    publishableKey: _kSupabaseAnonKey,
   );
-  await AppState.load(); // restore saved data before UI builds
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -149,12 +146,6 @@ class AppState {
   static List<List<Map<String, String>>> timetable = [];
   static final fontSizeNotifier = ValueNotifier<double>(14.0);
   static final Map<String, Set<int>> reliefMap = {};
-  // reliefClassMap[dateKey][periodIdx] = className for relief substitution
-  static final Map<String, Map<int, String>> reliefClassMap = {};
-  static String profilePhotoPath = '';
-  static bool isActivated = false;
-  static String activationCode = '';
-  static DateTime? expiresAt;
 
   // tasks[dateKey][periodIdx] = [{type, content, name}]
   static final Map<String, Map<int, List<Map<String, String>>>> tasks = {};
@@ -215,142 +206,6 @@ class AppState {
     }
     return classes.toList()..sort();
   }
-
-  // ── Persistence ─────────────────────────────────────────────────────────────
-  static String _todStr(TimeOfDay t) => '${t.hour}:${t.minute}';
-  static TimeOfDay? _strTod(String? s) {
-    if (s == null || s.isEmpty) return null;
-    final parts = s.split(':');
-    if (parts.length != 2) return null;
-    return TimeOfDay(
-      hour: int.tryParse(parts[0]) ?? 0,
-      minute: int.tryParse(parts[1]) ?? 0,
-    );
-  }
-
-  static Future<void> save() async {
-    final p = await SharedPreferences.getInstance();
-    await p.setString('name', name);
-    await p.setString('gender', gender);
-    await p.setInt('periods', periods);
-    await p.setInt('duration', duration);
-    await p.setDouble('fontSize', fontSizeNotifier.value);
-    if (firstStart != null) {
-      await p.setString('firstStart', _todStr(firstStart!));
-    }
-    if (firstEnd != null) {
-      await p.setString('firstEnd', _todStr(firstEnd!));
-    }
-    if (lastEnd != null) {
-      await p.setString('lastEnd', _todStr(lastEnd!));
-    }
-    if (intervalStart != null) {
-      await p.setString('intervalStart', _todStr(intervalStart!));
-    }
-    if (intervalEnd != null) {
-      await p.setString('intervalEnd', _todStr(intervalEnd!));
-    }
-    await p.setString('timetable', jsonEncode(timetable));
-    final tasksEncoded = tasks.map(
-      (dk, pm) =>
-          MapEntry(dk, pm.map((pi, list) => MapEntry(pi.toString(), list))),
-    );
-    await p.setString('tasks', jsonEncode(tasksEncoded));
-    final reliefEncoded = reliefMap.map((k, v) => MapEntry(k, v.toList()));
-    await p.setString('reliefMap', jsonEncode(reliefEncoded));
-    final reliefClassEncoded = reliefClassMap.map(
-      (k, v) => MapEntry(k, v.map((pi, cls) => MapEntry(pi.toString(), cls))),
-    );
-    await p.setString('reliefClassMap', jsonEncode(reliefClassEncoded));
-    await p.setString('students', jsonEncode(students));
-    await p.setString('profilePhotoPath', profilePhotoPath);
-    await p.setBool('isActivated', isActivated);
-    await p.setString('activationCode', activationCode);
-    if (expiresAt != null) await p.setString('expiresAt', expiresAt!.toIso8601String());
-  }
-
-  static Future<void> load() async {
-    final p = await SharedPreferences.getInstance();
-    name = p.getString('name') ?? '';
-    gender = p.getString('gender') ?? '';
-    periods = p.getInt('periods') ?? 8;
-    duration = p.getInt('duration') ?? 40;
-    fontSizeNotifier.value = p.getDouble('fontSize') ?? 14.0;
-    firstStart = _strTod(p.getString('firstStart'));
-    firstEnd = _strTod(p.getString('firstEnd'));
-    lastEnd = _strTod(p.getString('lastEnd'));
-    intervalStart = _strTod(p.getString('intervalStart'));
-    intervalEnd = _strTod(p.getString('intervalEnd'));
-    final ttRaw = p.getString('timetable');
-    if (ttRaw != null) {
-      final decoded = jsonDecode(ttRaw) as List;
-      timetable = decoded
-          .map<List<Map<String, String>>>(
-            (day) => (day as List)
-                .map<Map<String, String>>(
-                  (e) => Map<String, String>.from(e as Map),
-                )
-                .toList(),
-          )
-          .toList();
-    }
-    final tasksRaw = p.getString('tasks');
-    if (tasksRaw != null) {
-      final decoded = jsonDecode(tasksRaw) as Map;
-      tasks.clear();
-      decoded.forEach((dk, pm) {
-        tasks[dk as String] = {};
-        (pm as Map).forEach((pi, list) {
-          tasks[dk]![int.parse(pi as String)] = (list as List)
-              .map<Map<String, String>>(
-                (e) => Map<String, String>.from(e as Map),
-              )
-              .toList();
-        });
-      });
-    }
-    final reliefRaw = p.getString('reliefMap');
-    if (reliefRaw != null) {
-      final decoded = jsonDecode(reliefRaw) as Map;
-      reliefMap.clear();
-      decoded.forEach((k, v) {
-        reliefMap[k as String] = Set<int>.from(
-          (v as List).map((e) => e as int),
-        );
-      });
-    }
-    final reliefClassRaw = p.getString('reliefClassMap');
-    if (reliefClassRaw != null) {
-      final decoded = jsonDecode(reliefClassRaw) as Map;
-      reliefClassMap.clear();
-      decoded.forEach((k, v) {
-        reliefClassMap[k as String] = (v as Map).map(
-          (pi, cls) => MapEntry(int.parse(pi as String), cls as String),
-        );
-      });
-    }
-    final studentsRaw = p.getString('students');
-    if (studentsRaw != null) {
-      final decodedS = jsonDecode(studentsRaw) as Map;
-      students.clear();
-      decodedS.forEach((k, v) {
-        students[k as String] = (v as List).map((e) => e as String).toList();
-      });
-    }
-    profilePhotoPath = p.getString('profilePhotoPath') ?? '';
-    isActivated = p.getBool('isActivated') ?? false;
-    activationCode = p.getString('activationCode') ?? '';
-    final expiresRaw = p.getString('expiresAt');
-    expiresAt = expiresRaw != null ? DateTime.tryParse(expiresRaw) : null;
-    _cleanOldRelief();
-  }
-
-  // Remove relief entries for any day before today
-  static void _cleanOldRelief() {
-    final today = dateKey(DateTime.now());
-    reliefMap.removeWhere((k, _) => k != today);
-    reliefClassMap.removeWhere((k, _) => k != today);
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -386,286 +241,7 @@ class TeacherApp extends StatelessWidget {
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: kPrimaryBlue),
       ),
-      home: !AppState.isActivated
-          ? const ActivationScreen()
-          : AppState.expiresAt != null && DateTime.now().isAfter(AppState.expiresAt!)
-          ? const ExpiredScreen()
-          : AppState.name.isNotEmpty && AppState.timetable.isNotEmpty
-          ? const TimetablePage()
-          : const OnboardingFlow(),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ACTIVATION SCREEN
-// ═══════════════════════════════════════════════════════════════════════════════
-class ActivationScreen extends StatefulWidget {
-  const ActivationScreen({super.key});
-  @override
-  State<ActivationScreen> createState() => _ActivationScreenState();
-}
-
-class _ActivationScreenState extends State<ActivationScreen> {
-  final _codeCtrl = TextEditingController();
-  bool _loading = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    _codeCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _activate() async {
-    final code = _codeCtrl.text.trim().toUpperCase();
-    if (code.isEmpty) {
-      setState(() => _error = 'Please enter your activation code.');
-      return;
-    }
-    setState(() { _loading = true; _error = null; });
-    try {
-      final result = await Supabase.instance.client
-          .from('activation_codes')
-          .select()
-          .eq('code', code)
-          .maybeSingle();
-      if (result == null) {
-        setState(() => _error = 'Invalid code. Please check and try again.');
-      } else if (result['used'] == true) {
-        setState(() => _error = 'This code has already been used.');
-      } else {
-        final expiresAt = result['expires_at'] != null
-            ? DateTime.tryParse(result['expires_at'] as String)
-            : DateTime.now().add(const Duration(days: 14));
-        await Supabase.instance.client
-            .from('activation_codes')
-            .update({'used': true, 'activated_at': DateTime.now().toIso8601String()})
-            .eq('code', code);
-        AppState.isActivated = true;
-        AppState.activationCode = code;
-        AppState.expiresAt = expiresAt;
-        await AppState.save();
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const OnboardingFlow()),
-          );
-        }
-      }
-    } catch (e) {
-      setState(() => _error = 'Connection error. Check your internet and try again.');
-    }
-    setState(() => _loading = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: kBgLight,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: kPrimaryBlue.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(Icons.lock_rounded, color: kPrimaryBlue, size: 32),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Activate Your App',
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w900,
-                  color: kDarkText,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Enter the activation code sent to you via WhatsApp after payment.',
-                style: TextStyle(fontSize: 14, color: kMidText, height: 1.5),
-              ),
-              const SizedBox(height: 32),
-              TextField(
-                controller: _codeCtrl,
-                textCapitalization: TextCapitalization.characters,
-                style: const TextStyle(
-                  color: kDarkText,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 18,
-                  letterSpacing: 2,
-                ),
-                decoration: InputDecoration(
-                  hintText: 'e.g. TEACH-XK9P',
-                  hintStyle: TextStyle(
-                    color: kMidText.withValues(alpha: 0.5),
-                    fontWeight: FontWeight.w400,
-                    fontSize: 16,
-                    letterSpacing: 1,
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(color: kBorderCol),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(color: kBorderCol),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: kPrimaryBlue, width: 2),
-                  ),
-                  errorText: _error,
-                  errorMaxLines: 2,
-                  prefixIcon: const Icon(Icons.vpn_key_rounded, color: kMidText),
-                ),
-                onSubmitted: (_) => _activate(),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: _loading ? null : _activate,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: kPrimaryBlue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: _loading
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Text(
-                          'Activate',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-                        ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Center(
-                child: Text(
-                  'Contact us on WhatsApp to get your activation code.',
-                  style: TextStyle(
-                    color: kMidText.withValues(alpha: 0.7),
-                    fontSize: 12,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// EXPIRED SCREEN
-// ═══════════════════════════════════════════════════════════════════════════════
-class ExpiredScreen extends StatelessWidget {
-  const ExpiredScreen({super.key});
-
-  // ── Replace with your WhatsApp number ─────────────────────────────────────
-  static const _whatsappNumber = '94XXXXXXXXX'; // e.g. 94771234567
-
-  @override
-  Widget build(BuildContext context) {
-    final expires = AppState.expiresAt;
-    final expiredDaysAgo = expires != null
-        ? DateTime.now().difference(expires).inDays
-        : 0;
-
-    return Scaffold(
-      backgroundColor: kBgLight,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF2F2),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(Icons.lock_clock_rounded, color: Color(0xFFDC2626), size: 32),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Subscription Expired',
-                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: kDarkText),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                expiredDaysAgo <= 0
-                    ? 'Your 14-day access expired today.'
-                    : 'Your 14-day access expired $expiredDaysAgo day${expiredDaysAgo == 1 ? '' : 's'} ago.',
-                style: const TextStyle(fontSize: 14, color: kMidText, height: 1.5),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'To continue using the app, please renew your subscription and contact us on WhatsApp with your payment receipt.',
-                style: TextStyle(fontSize: 14, color: kMidText, height: 1.5),
-              ),
-              const SizedBox(height: 32),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton.icon(
-                  onPressed: () async {
-                    final uri = Uri.parse('https://wa.me/$_whatsappNumber?text=Hi%2C%20I%20would%20like%20to%20renew%20my%20Teacher%20Planner%20subscription.');
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  },
-                  icon: const Icon(Icons.chat_rounded),
-                  label: const Text('Contact on WhatsApp', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF25D366),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const ActivationScreen()),
-                  ),
-                  icon: const Icon(Icons.vpn_key_rounded, color: kPrimaryBlue),
-                  label: const Text('Enter New Code', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kPrimaryBlue)),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: kPrimaryBlue),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+      home: const OnboardingFlow(),
     );
   }
 }
@@ -1551,7 +1127,6 @@ class _TimetableSetupPageState extends State<TimetableSetupPage>
               .toList(),
         )
         .toList();
-    AppState.save();
     Navigator.of(
       context,
     ).pushReplacement(MaterialPageRoute(builder: (_) => const TimetablePage()));
@@ -1588,7 +1163,7 @@ class _TimetableSetupPageState extends State<TimetableSetupPage>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Hello, ${AppState.displayName}',
+                'Hello, ${AppState.displayName} 👋',
                 style: const TextStyle(
                   color: Colors.white70,
                   fontSize: 13,
@@ -1882,7 +1457,6 @@ class _PeriodEntryCardState extends State<_PeriodEntryCard> {
                   flex: 3,
                   child: _SubjectField(
                     initialValue: widget.entry.subject,
-                    textColor: fg,
                     onChanged: (v) {
                       widget.entry.subject = v;
                       widget.onChange();
@@ -1924,12 +1498,7 @@ class _PeriodEntryCardState extends State<_PeriodEntryCard> {
 class _SubjectField extends StatefulWidget {
   final String initialValue;
   final void Function(String) onChanged;
-  final Color textColor;
-  const _SubjectField({
-    required this.initialValue,
-    required this.onChanged,
-    this.textColor = Colors.white,
-  });
+  const _SubjectField({required this.initialValue, required this.onChanged});
   @override
   State<_SubjectField> createState() => _SubjectFieldState();
 }
@@ -1979,8 +1548,8 @@ class _SubjectFieldState extends State<_SubjectField> {
     children: [
       TextField(
         controller: _ctrl,
-        style: TextStyle(
-          color: widget.textColor,
+        style: const TextStyle(
+          color: Colors.white,
           fontSize: 14,
           fontWeight: FontWeight.w600,
         ),
@@ -2116,23 +1685,20 @@ PCol pColors(PeriodType t) {
 class Period {
   final int number;
   final String subject, className;
-  final String reliefClass;
   final PeriodType type;
   final TimeOfDay startTime, endTime;
   const Period({
     required this.number,
     required this.subject,
     required this.className,
-    this.reliefClass = '',
     required this.type,
     required this.startTime,
     required this.endTime,
   });
-  Period copyWith({PeriodType? type, String? reliefClass}) => Period(
+  Period copyWith({PeriodType? type}) => Period(
     number: number,
     subject: subject,
     className: className,
-    reliefClass: reliefClass ?? this.reliefClass,
     type: type ?? this.type,
     startTime: startTime,
     endTime: endTime,
@@ -2206,9 +1772,8 @@ List<Period> buildPeriods(DateTime now) {
   return result.asMap().entries.map((e) {
     final i = e.key;
     final p = e.value;
-    if (relieved.contains(i)) {
-      final rc = AppState.reliefClassMap[dk]?[i] ?? '';
-      return p.copyWith(type: PeriodType.relief, reliefClass: rc);
+    if (relieved.contains(i) && p.type != PeriodType.off) {
+      return p.copyWith(type: PeriodType.relief);
     }
     if (nowMins >= _toMin(p.startTime) && nowMins < _toMin(p.endTime)) {
       return p.copyWith(type: PeriodType.current);
@@ -2218,19 +1783,14 @@ List<Period> buildPeriods(DateTime now) {
 }
 
 int getActiveIdx(List<Period> periods, DateTime now) {
-  if (periods.isEmpty) return 0;
   final nowMins = now.hour * 60 + now.minute;
-  if (nowMins < _toMin(periods[0].startTime)) return -1; // before first period
   for (int i = 0; i < periods.length; i++) {
     if (nowMins >= _toMin(periods[i].startTime) &&
         nowMins < _toMin(periods[i].endTime)) {
       return i;
     }
   }
-  if (nowMins >= _toMin(periods.last.endTime)) {
-    return periods.length; // after last
-  }
-  return periods.length > 3 ? 3 : 0; // between periods
+  return periods.length > 3 ? 3 : 0;
 }
 
 // ─── Avatar ───────────────────────────────────────────────────────────────────
@@ -2248,24 +1808,15 @@ class _Avatar extends StatelessWidget {
       color: bg ?? Colors.white.withValues(alpha: 0.2),
       border: Border.all(color: Colors.white.withValues(alpha: 0.3), width: 2),
     ),
-    child: ClipOval(
-      child: AppState.profilePhotoPath.isNotEmpty
-          ? Image.file(
-              File(AppState.profilePhotoPath),
-              width: size,
-              height: size,
-              fit: BoxFit.cover,
-            )
-          : Center(
-              child: Text(
-                name.isNotEmpty ? name[0].toUpperCase() : 'T',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: size * 0.42,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
+    child: Center(
+      child: Text(
+        name.isNotEmpty ? name[0].toUpperCase() : 'T',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: size * 0.42,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
     ),
   );
 }
@@ -2340,9 +1891,6 @@ class _TimetablePageState extends State<TimetablePage> {
     );
   }
 
-  bool get _isWeekend =>
-      _now.weekday == DateTime.saturday || _now.weekday == DateTime.sunday;
-
   @override
   Widget build(BuildContext context) {
     final periods = buildPeriods(_now);
@@ -2355,60 +1903,56 @@ class _TimetablePageState extends State<TimetablePage> {
           child: Column(
             children: [
               _buildHeader(fs),
-              if (!_isWeekend) _buildLegend(),
+              _buildLegend(),
               const SizedBox(height: 8),
               Expanded(
-                child: _isWeekend
-                    ? _buildHolidayView(fs)
-                    : Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 14),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: LayoutBuilder(
-                                builder: (_, c) {
-                                  final n = periods.length;
-                                  const gap = 5.0;
-                                  final cardH =
-                                      (c.maxHeight - gap * (n - 1)) / n;
-                                  return Column(
-                                    children: List.generate(
-                                      n,
-                                      (i) => Padding(
-                                        padding: EdgeInsets.only(
-                                          bottom: i < n - 1 ? gap : 0,
-                                        ),
-                                        child: SizedBox(
-                                          height: cardH,
-                                          child: GestureDetector(
-                                            onTap: () =>
-                                                _openDetail(periods[i], i),
-                                            child: PeriodCard(
-                                              period: periods[i],
-                                              isActive: i == activeIdx,
-                                              fontSize: fs,
-                                            ),
-                                          ),
-                                        ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (_, c) {
+                            final n = periods.length;
+                            const gap = 5.0;
+                            final cardH = (c.maxHeight - gap * (n - 1)) / n;
+                            return Column(
+                              children: List.generate(
+                                n,
+                                (i) => Padding(
+                                  padding: EdgeInsets.only(
+                                    bottom: i < n - 1 ? gap : 0,
+                                  ),
+                                  child: SizedBox(
+                                    height: cardH,
+                                    child: GestureDetector(
+                                      onTap: () => _openDetail(periods[i], i),
+                                      child: PeriodCard(
+                                        period: periods[i],
+                                        isActive: i == activeIdx,
+                                        fontSize: fs,
                                       ),
                                     ),
-                                  );
-                                },
+                                  ),
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: 60,
-                              child: TimetableTimeline(
-                                currentTime: _fmt12Now(_now),
-                                activePeriodIdx: activeIdx,
-                                totalPeriods: periods.length,
-                              ),
-                            ),
-                          ],
+                            );
+                          },
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 60,
+                        child: TimetableTimeline(
+                          currentTime: _fmt12Now(_now),
+                          activePeriodIdx: activeIdx,
+                          totalPeriods: periods.length,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
               const SizedBox(height: 4),
               _buildNav(),
@@ -2418,45 +1962,6 @@ class _TimetablePageState extends State<TimetablePage> {
       ),
     );
   }
-
-  Widget _buildHolidayView(double fs) => Center(
-    child: Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
-          width: 90,
-          height: 90,
-          decoration: BoxDecoration(
-            color: kPrimaryBlue.withValues(alpha: 0.1),
-            shape: BoxShape.circle,
-          ),
-          child: const Center(
-            child: Text('🏖️', style: TextStyle(fontSize: 44)),
-          ),
-        ),
-        const SizedBox(height: 20),
-        Text(
-          'Holiday',
-          style: TextStyle(
-            color: kDarkText,
-            fontSize: fs + 14,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          _dayName,
-          style: const TextStyle(
-            color: kMidText,
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(_dateLabel, style: const TextStyle(color: kMidText, fontSize: 13)),
-      ],
-    ),
-  );
 
   Widget _buildHeader(double fs) => Container(
     color: Colors.white,
@@ -2479,7 +1984,7 @@ class _TimetablePageState extends State<TimetablePage> {
               ),
               const SizedBox(height: 2),
               Text(
-                'Hello, ${AppState.displayName}',
+                'Hello, ${AppState.displayName} 👋',
                 style: TextStyle(
                   color: kDarkText,
                   fontSize: fs + 6,
@@ -2541,44 +2046,30 @@ class _TimetablePageState extends State<TimetablePage> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                GestureDetector(
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const SettingsPage()),
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: kPrimaryBlue,
+                    boxShadow: [
+                      BoxShadow(
+                        color: kPrimaryBlue.withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
                   ),
-                  child: Container(
-                    width: 46,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: kPrimaryBlue,
-                      boxShadow: [
-                        BoxShadow(
-                          color: kPrimaryBlue.withValues(alpha: 0.3),
-                          blurRadius: 8,
-                          offset: const Offset(0, 3),
-                        ),
-                      ],
-                    ),
-                    child: ClipOval(
-                      child: AppState.profilePhotoPath.isNotEmpty
-                          ? Image.file(
-                              File(AppState.profilePhotoPath),
-                              width: 46,
-                              height: 46,
-                              fit: BoxFit.cover,
-                            )
-                          : Center(
-                              child: Text(
-                                AppState.name.isNotEmpty
-                                    ? AppState.name[0].toUpperCase()
-                                    : 'T',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
+                  child: Center(
+                    child: Text(
+                      AppState.name.isNotEmpty
+                          ? AppState.name[0].toUpperCase()
+                          : 'T',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                 ),
@@ -3094,29 +2585,12 @@ class _TasksTab extends StatelessWidget {
                                 ),
                               IconButton(
                                 icon: const Icon(
-                                  Icons.send_rounded,
-                                  color: kPrimaryBlue,
-                                  size: 18,
-                                ),
-                                tooltip: 'Send to another period',
-                                onPressed: () => showDialog(
-                                  context: context,
-                                  builder: (_) => _SendTaskDialog(
-                                    task: t,
-                                    sourceDate: date,
-                                    sourcePeriodIdx: periodIdx,
-                                  ),
-                                ).then((_) => onChanged()),
-                              ),
-                              IconButton(
-                                icon: const Icon(
                                   Icons.delete_outline_rounded,
                                   color: Color(0xFFEF4444),
                                   size: 20,
                                 ),
                                 onPressed: () {
                                   AppState.removeTask(date, periodIdx, i);
-                                  AppState.save();
                                   onChanged();
                                 },
                               ),
@@ -3141,7 +2615,6 @@ class _TasksTab extends StatelessWidget {
                 builder: (_) => AddTaskSheet(
                   onAdd: (t) {
                     AppState.addTask(date, periodIdx, t);
-                    AppState.save();
                     onChanged();
                   },
                 ),
@@ -3160,101 +2633,6 @@ class _TasksTab extends StatelessWidget {
               ),
             ),
           ),
-        ),
-      ],
-    );
-  }
-}
-
-// ─── Send task dialog ─────────────────────────────────────────────────────────
-class _SendTaskDialog extends StatefulWidget {
-  final Map<String, String> task;
-  final DateTime sourceDate;
-  final int sourcePeriodIdx;
-  const _SendTaskDialog({
-    required this.task,
-    required this.sourceDate,
-    required this.sourcePeriodIdx,
-  });
-  @override
-  State<_SendTaskDialog> createState() => _SendTaskDialogState();
-}
-
-class _SendTaskDialogState extends State<_SendTaskDialog> {
-  static const _dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-  int _selectedDay = 0;
-  int _selectedPeriod = 0;
-
-  DateTime _targetDate(int weekday) {
-    final today = DateTime.now();
-    int diff = weekday - today.weekday;
-    if (diff <= 0) diff += 7;
-    return today.add(Duration(days: diff));
-  }
-
-  List<String> get _periodsForDay {
-    final tt = AppState.timetable;
-    if (_selectedDay >= tt.length) return [];
-    return tt[_selectedDay].asMap().entries.map((e) {
-      final subj = e.value['subject'] ?? '';
-      return 'Period ${e.key + 1}${subj.isNotEmpty ? ': $subj' : ''}';
-    }).toList();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final periods = _periodsForDay;
-    final clampedPeriod = _selectedPeriod.clamp(0, periods.isEmpty ? 0 : periods.length - 1);
-    return AlertDialog(
-      title: const Text('Send Task To', style: TextStyle(fontWeight: FontWeight.w800)),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Day', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: kMidText)),
-          const SizedBox(height: 6),
-          DropdownButton<int>(
-            value: _selectedDay,
-            isExpanded: true,
-            items: List.generate(5, (i) => DropdownMenuItem(value: i, child: Text(_dayNames[i]))),
-            onChanged: (v) => setState(() { _selectedDay = v!; _selectedPeriod = 0; }),
-          ),
-          const SizedBox(height: 12),
-          const Text('Period', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: kMidText)),
-          const SizedBox(height: 6),
-          periods.isEmpty
-              ? const Text('No periods configured', style: TextStyle(color: kMidText, fontSize: 13))
-              : DropdownButton<int>(
-                  value: clampedPeriod,
-                  isExpanded: true,
-                  items: List.generate(periods.length, (i) => DropdownMenuItem(
-                    value: i,
-                    child: Text(periods[i], overflow: TextOverflow.ellipsis),
-                  )),
-                  onChanged: (v) => setState(() => _selectedPeriod = v!),
-                ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: kPrimaryBlue,
-            foregroundColor: Colors.white,
-          ),
-          onPressed: periods.isEmpty ? null : () {
-            final targetDate = _targetDate(_selectedDay + 1);
-            AppState.addTask(targetDate, clampedPeriod, Map<String, String>.from(widget.task));
-            AppState.save();
-            Navigator.pop(context);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Task sent to ${_dayNames[_selectedDay]}, Period ${clampedPeriod + 1}')),
-            );
-          },
-          child: const Text('Send'),
         ),
       ],
     );
@@ -3654,8 +3032,8 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
             ),
           ),
           const SizedBox(height: 14),
-          // Name field — only shown for voice_note
-          if (_type == 'voice_note') TextField(
+          // Name field
+          TextField(
             controller: _nameCtrl,
             decoration: InputDecoration(
               hintText: 'Task name / description',
@@ -3787,11 +3165,11 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
             height: 48,
             child: ElevatedButton(
               onPressed: () {
-                if (_type == 'voice_note' && _nameCtrl.text.trim().isEmpty) return;
+                if (_nameCtrl.text.trim().isEmpty) return;
                 if (_isFile && _pickedFilePath == null) return;
-                if (_isTextOrDoc && _useFileForDoc && _pickedFilePath == null) return;
-                if (_isUrl && _contentCtrl.text.trim().isEmpty) return;
-                if (_isTextOrDoc && !_useFileForDoc && _contentCtrl.text.trim().isEmpty) return;
+                if (_isTextOrDoc && _useFileForDoc && _pickedFilePath == null) {
+                  return;
+                }
                 String content;
                 if (_isFile) {
                   content = _pickedFilePath!;
@@ -3800,20 +3178,9 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
                 } else {
                   content = _contentCtrl.text.trim();
                 }
-                // Auto-generate name when field is hidden
-                String taskName = _nameCtrl.text.trim();
-                if (taskName.isEmpty) {
-                  if (_isUrl) {
-                    taskName = content.length > 40 ? content.substring(0, 40) : content;
-                  } else if (_pickedFileName != null) {
-                    taskName = _pickedFileName!;
-                  } else {
-                    taskName = content.length > 40 ? '${content.substring(0, 40)}...' : content;
-                  }
-                }
                 widget.onAdd({
                   'type': _type,
-                  'name': taskName,
+                  'name': _nameCtrl.text.trim(),
                   'content': content,
                 });
                 Navigator.of(context).pop();
@@ -4049,11 +3416,7 @@ class PeriodCard extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    isOff
-                        ? 'Off Period'
-                        : period.type == PeriodType.relief
-                        ? 'Relief${period.reliefClass.isNotEmpty ? ' – ${period.reliefClass}' : ''}'
-                        : period.subject,
+                    isOff ? 'Off Period' : period.subject,
                     style: TextStyle(
                       color: c.text,
                       fontSize: fontSize,
@@ -4158,14 +3521,7 @@ class TimetableTimeline extends StatelessWidget {
     builder: (_, c) {
       final h = c.maxHeight;
       final rowH = h / totalPeriods;
-      final double mTop;
-      if (activePeriodIdx < 0) {
-        mTop = 0;
-      } else if (activePeriodIdx >= totalPeriods) {
-        mTop = h - 6;
-      } else {
-        mTop = activePeriodIdx * rowH + rowH * 0.5;
-      }
+      final mTop = activePeriodIdx * rowH + rowH * 0.5;
       return Stack(
         clipBehavior: Clip.none,
         children: [
@@ -4569,7 +3925,6 @@ class _TasksPageState extends State<TasksPage> {
                     ),
                     onPressed: () {
                       AppState.removeTask(_selectedDate, i, e.key);
-                      AppState.save();
                       setState(() {});
                     },
                   ),
@@ -4589,7 +3944,6 @@ class _TasksPageState extends State<TasksPage> {
                         builder: (ctx) => AddTaskSheet(
                           onAdd: (t) {
                             AppState.addTask(_selectedDate, i, t);
-                            AppState.save();
                             setState(() {});
                           },
                         ),
@@ -4667,55 +4021,16 @@ class _SchedulePageState extends State<SchedulePage>
         d.day == _today.day;
   }
 
-  Future<void> _toggleRelief(int tab, int idx) async {
+  void _toggleRelief(int tab, int idx) {
     final k = _dk(_dateForTab(tab));
-    AppState.reliefMap.putIfAbsent(k, () => {});
-    if (AppState.reliefMap[k]!.contains(idx)) {
-      // Remove relief
-      setState(() {
+    setState(() {
+      AppState.reliefMap.putIfAbsent(k, () => {});
+      if (AppState.reliefMap[k]!.contains(idx)) {
         AppState.reliefMap[k]!.remove(idx);
-        AppState.reliefClassMap[k]?.remove(idx);
-      });
-      AppState.save();
-    } else {
-      // Ask for relief class before marking
-      final ctrl = TextEditingController();
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Relief Class', style: TextStyle(fontWeight: FontWeight.w800)),
-          content: TextField(
-            controller: ctrl,
-            autofocus: true,
-            decoration: InputDecoration(
-              hintText: 'Enter class (e.g. Grade 10A)',
-              filled: true,
-              fillColor: kBgSubtle,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: kBorderCol)),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: kBorderCol)),
-              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: kPrimaryBlue, width: 1.5)),
-            ),
-            style: const TextStyle(color: kDarkText, fontWeight: FontWeight.w600),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: kPrimaryBlue, foregroundColor: Colors.white),
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Confirm'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed == true) {
-        setState(() {
-          AppState.reliefMap[k]!.add(idx);
-          AppState.reliefClassMap.putIfAbsent(k, () => {});
-          AppState.reliefClassMap[k]![idx] = ctrl.text.trim();
-        });
-        AppState.save();
+      } else {
+        AppState.reliefMap[k]!.add(idx);
       }
-    }
+    });
   }
 
   @override
@@ -4915,10 +4230,7 @@ class _SchedulePageState extends State<SchedulePage>
         'number': i + 1,
         'subject': m['subject'] ?? '',
         'class': m['class'] ?? '',
-        'isOff':
-            (m['subject'] ?? '').isEmpty ||
-            (m['type'] ?? '') == 'off' ||
-            (m['subject'] ?? '') == 'Off Period',
+        'isOff': (m['subject'] ?? '').isEmpty || (m['type'] ?? '') == 'off',
         'isRelief': relieved.contains(i),
         'startTime': ps,
         'endTime': pe,
@@ -5009,14 +4321,14 @@ class _SchedulePageState extends State<SchedulePage>
               final isOff = s['isOff'] as bool;
               final isRelief = s['isRelief'] as bool;
               Color bg, border, tc;
-              if (isRelief) {
-                bg = const Color(0xFFFEF9C3);
-                border = const Color(0xFFFDE68A);
-                tc = const Color(0xFF78350F);
-              } else if (isOff) {
+              if (isOff) {
                 bg = const Color(0xFFE8E8EA);
                 border = const Color(0xFFCBCBD0);
                 tc = const Color(0xFF5C5C6E);
+              } else if (isRelief) {
+                bg = const Color(0xFFFEF9C3);
+                border = const Color(0xFFFDE68A);
+                tc = const Color(0xFF78350F);
               } else if ((s['subject'] as String).isNotEmpty &&
                   (s['class'] as String).isNotEmpty) {
                 bg = const Color(0xFFD1FAE5);
@@ -5077,7 +4389,7 @@ class _SchedulePageState extends State<SchedulePage>
                               isOff
                                   ? 'Off Period'
                                   : isRelief
-                                  ? 'Relief${(AppState.reliefClassMap[dk]?[s['index'] as int] ?? '').isNotEmpty ? ' – ${AppState.reliefClassMap[dk]![s['index'] as int]}' : ''}'
+                                  ? 'Relief'
                                   : '${s['subject']}',
                               style: TextStyle(
                                 color: tc,
@@ -5118,7 +4430,7 @@ class _SchedulePageState extends State<SchedulePage>
                             ),
                           ),
                         ),
-                      if (isOff || isRelief)
+                      if (!isOff)
                         GestureDetector(
                           onTap: () => _toggleRelief(tab, s['index'] as int),
                           child: AnimatedContainer(
@@ -5339,41 +4651,14 @@ class _StudentManagementPageState extends State<StudentManagementPage> {
 
   void _addStudent() {
     if (_nameCtrl.text.trim().isEmpty || _selectedClass == null) return;
-    AppState.students.putIfAbsent(_selectedClass!, () => []);
-    AppState.students[_selectedClass!]!.add(_nameCtrl.text.trim());
-    AppState.save();
+    AppState.students[_selectedClass]!.add(_nameCtrl.text.trim());
     _nameCtrl.clear();
     setState(() {});
   }
 
-  Future<void> _deleteStudent(int i) async {
-    final name = _studentList[i];
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Delete Student'),
-        content: Text('Remove "$name" from the list?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFEF4444),
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      AppState.students[_selectedClass!]!.removeAt(i);
-      AppState.save();
-      setState(() {});
-    }
+  void _deleteStudent(int i) {
+    AppState.students[_selectedClass]!.removeAt(i);
+    setState(() {});
   }
 
   void _editStudent(int i) {
@@ -5395,7 +4680,7 @@ class _StudentManagementPageState extends State<StudentManagementPage> {
           ElevatedButton(
             onPressed: () {
               if (ctrl.text.trim().isNotEmpty) {
-                AppState.students[_selectedClass!]![i] = ctrl.text.trim();
+                AppState.students[_selectedClass]![i] = ctrl.text.trim();
                 setState(() {});
               }
               Navigator.pop(context);
@@ -5690,6 +4975,54 @@ class _StudentManagementPageState extends State<StudentManagementPage> {
                                 ],
                               ),
                             ),
+                            // Excel upload hint
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+                              child: GestureDetector(
+                                // ignore: avoid_print
+                                onTap: () => print(
+                                  'TODO: integrate excel package for bulk upload',
+                                ),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE8F5E9),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: const Color(0xFFA5D6A7),
+                                    ),
+                                  ),
+                                  child: const Row(
+                                    children: [
+                                      Icon(
+                                        Icons.table_chart_outlined,
+                                        color: Color(0xFF2E7D32),
+                                        size: 18,
+                                      ),
+                                      SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          'Upload from Excel file',
+                                          style: TextStyle(
+                                            color: Color(0xFF2E7D32),
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      Icon(
+                                        Icons.file_upload_outlined,
+                                        color: Color(0xFF2E7D32),
+                                        size: 16,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
                             Padding(
                               padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
                               child: Row(
@@ -5786,8 +5119,6 @@ class _StudentManagementPageState extends State<StudentManagementPage> {
                                             ),
                                             title: Text(
                                               name,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
                                               style: const TextStyle(
                                                 color: kDarkText,
                                                 fontSize: 13,
@@ -5863,27 +5194,18 @@ class _WebConnectPageState extends State<WebConnectPage> {
   final _cameraController = MobileScannerController();
   bool _scanned = false;
   final List<String> _uploadErrors = [];
-  final List<String> _uploadedFileNames = []; // track for cleanup on disconnect
   int _cloudUploaded = 0;
 
   @override
   void dispose() {
     _cameraController.dispose();
     _server?.close(force: true);
-    final sid = _sessionId;
-    final filesToDelete = List<String>.from(_uploadedFileNames);
-    if (sid != null) {
+    // Delete session data from Supabase when leaving this page
+    if (_sessionId != null) {
       Supabase.instance.client
           .from('sessions')
           .delete()
-          .eq('id', sid)
-          .then((_) {})
-          .catchError((_) {});
-    }
-    if (filesToDelete.isNotEmpty) {
-      Supabase.instance.client.storage
-          .from('task-files')
-          .remove(filesToDelete)
+          .eq('id', _sessionId!)
           .then((_) {})
           .catchError((_) {});
     }
@@ -5959,12 +5281,8 @@ class _WebConnectPageState extends State<WebConnectPage> {
       final exists = await file.exists();
       if (!exists) continue;
 
-      final safeSession = (_sessionId ?? dk).replaceAll(
-        RegExp(r'[^a-zA-Z0-9_-]'),
-        '_',
-      );
       final fileName =
-          '${safeSession}_${content.split('/').last.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_')}';
+          '${dk}_${content.split('/').last.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_')}';
       try {
         final bytes = await file.readAsBytes();
         if (bytes.isEmpty) continue;
@@ -5980,7 +5298,6 @@ class _WebConnectPageState extends State<WebConnectPage> {
             );
         final url = storage.from('task-files').getPublicUrl(fileName);
         cloudUrls[content] = url;
-        _uploadedFileNames.add(fileName);
       } catch (e) {
         // Store the error so _buildDoneView can show it
         _uploadErrors.add('${content.split('/').last}: $e');
@@ -6138,41 +5455,13 @@ class _WebConnectPageState extends State<WebConnectPage> {
     await req.response.close();
   }
 
-  Future<void> _rescan() async {
-    final sid = _sessionId;
-    final filesToDelete = List<String>.from(_uploadedFileNames);
+  void _rescan() {
     setState(() {
       _phase = _WcPhase.scanner;
       _scanned = false;
       _sessionId = null;
-      _uploadedFileNames.clear();
-      _uploadErrors.clear();
-      _cloudUploaded = 0;
     });
     _cameraController.start();
-    // Delete session row
-    if (sid != null) {
-      try {
-        await Supabase.instance.client.from('sessions').delete().eq('id', sid);
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Session delete failed: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    }
-    // Delete uploaded files from storage
-    if (filesToDelete.isNotEmpty) {
-      try {
-        await Supabase.instance.client.storage
-            .from('task-files')
-            .remove(filesToDelete);
-      } catch (_) {}
-    }
   }
 
   @override
@@ -6813,7 +6102,6 @@ class _SettingsPageState extends State<SettingsPage> {
   String _gender = '';
   TimeOfDay? _fs, _le, _is, _ie;
   late double _fontSize;
-  String _photoPath = '';
 
   @override
   void initState() {
@@ -6827,7 +6115,6 @@ class _SettingsPageState extends State<SettingsPage> {
     _is = AppState.intervalStart;
     _ie = AppState.intervalEnd;
     _fontSize = AppState.fontSizeNotifier.value;
-    _photoPath = AppState.profilePhotoPath;
   }
 
   @override
@@ -6836,16 +6123,6 @@ class _SettingsPageState extends State<SettingsPage> {
     _periodsCtrl.dispose();
     _durationCtrl.dispose();
     super.dispose();
-  }
-
-  Future<void> _pickPhoto() async {
-    final result = await FilePicker.pickFiles(type: FileType.image);
-    if (result.isNotEmpty) {
-      final path = result.single.path;
-      if (path != null) {
-        setState(() => _photoPath = path);
-      }
-    }
   }
 
   void _save() {
@@ -6858,8 +6135,6 @@ class _SettingsPageState extends State<SettingsPage> {
     AppState.intervalStart = _is;
     AppState.intervalEnd = _ie;
     AppState.fontSizeNotifier.value = _fontSize;
-    AppState.profilePhotoPath = _photoPath;
-    AppState.save();
     Navigator.of(context).pop();
   }
 
@@ -6944,75 +6219,62 @@ class _SettingsPageState extends State<SettingsPage> {
                   _card(
                     child: Column(
                       children: [
-                        GestureDetector(
-                          onTap: _pickPhoto,
-                          child: Center(
-                            child: Stack(
-                              children: [
-                                Container(
-                                  width: 72,
-                                  height: 72,
-                                  decoration: BoxDecoration(
+                        Center(
+                          child: Stack(
+                            children: [
+                              Container(
+                                width: 72,
+                                height: 72,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: kPrimaryBlue,
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: kPrimaryBlue.withValues(
+                                        alpha: 0.3,
+                                      ),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 3),
+                                    ),
+                                  ],
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    AppState.name.isNotEmpty
+                                        ? AppState.name[0].toUpperCase()
+                                        : 'T',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 30,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Container(
+                                  width: 24,
+                                  height: 24,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.white,
                                     shape: BoxShape.circle,
-                                    color: kPrimaryBlue,
                                     boxShadow: [
                                       BoxShadow(
-                                        color: kPrimaryBlue.withValues(
-                                          alpha: 0.3,
-                                        ),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 3),
+                                        color: Colors.black12,
+                                        blurRadius: 4,
                                       ),
                                     ],
                                   ),
-                                  child: ClipOval(
-                                    child: _photoPath.isNotEmpty
-                                        ? Image.file(
-                                            File(_photoPath),
-                                            width: 72,
-                                            height: 72,
-                                            fit: BoxFit.cover,
-                                          )
-                                        : Center(
-                                            child: Text(
-                                              AppState.name.isNotEmpty
-                                                  ? AppState.name[0]
-                                                        .toUpperCase()
-                                                  : 'T',
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 30,
-                                                fontWeight: FontWeight.w800,
-                                              ),
-                                            ),
-                                          ),
+                                  child: const Icon(
+                                    Icons.camera_alt_rounded,
+                                    size: 14,
+                                    color: kPrimaryBlue,
                                   ),
                                 ),
-                                Positioned(
-                                  bottom: 0,
-                                  right: 0,
-                                  child: Container(
-                                    width: 24,
-                                    height: 24,
-                                    decoration: const BoxDecoration(
-                                      color: Colors.white,
-                                      shape: BoxShape.circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black12,
-                                          blurRadius: 4,
-                                        ),
-                                      ],
-                                    ),
-                                    child: const Icon(
-                                      Icons.camera_alt_rounded,
-                                      size: 14,
-                                      color: kPrimaryBlue,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 4),

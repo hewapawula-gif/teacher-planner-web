@@ -149,12 +149,7 @@ class AppState {
   static List<List<Map<String, String>>> timetable = [];
   static final fontSizeNotifier = ValueNotifier<double>(14.0);
   static final Map<String, Set<int>> reliefMap = {};
-  // reliefClassMap[dateKey][periodIdx] = className for relief substitution
-  static final Map<String, Map<int, String>> reliefClassMap = {};
   static String profilePhotoPath = '';
-  static bool isActivated = false;
-  static String activationCode = '';
-  static DateTime? expiresAt;
 
   // tasks[dateKey][periodIdx] = [{type, content, name}]
   static final Map<String, Map<int, List<Map<String, String>>>> tasks = {};
@@ -258,15 +253,8 @@ class AppState {
     await p.setString('tasks', jsonEncode(tasksEncoded));
     final reliefEncoded = reliefMap.map((k, v) => MapEntry(k, v.toList()));
     await p.setString('reliefMap', jsonEncode(reliefEncoded));
-    final reliefClassEncoded = reliefClassMap.map(
-      (k, v) => MapEntry(k, v.map((pi, cls) => MapEntry(pi.toString(), cls))),
-    );
-    await p.setString('reliefClassMap', jsonEncode(reliefClassEncoded));
     await p.setString('students', jsonEncode(students));
     await p.setString('profilePhotoPath', profilePhotoPath);
-    await p.setBool('isActivated', isActivated);
-    await p.setString('activationCode', activationCode);
-    if (expiresAt != null) await p.setString('expiresAt', expiresAt!.toIso8601String());
   }
 
   static Future<void> load() async {
@@ -319,16 +307,6 @@ class AppState {
         );
       });
     }
-    final reliefClassRaw = p.getString('reliefClassMap');
-    if (reliefClassRaw != null) {
-      final decoded = jsonDecode(reliefClassRaw) as Map;
-      reliefClassMap.clear();
-      decoded.forEach((k, v) {
-        reliefClassMap[k as String] = (v as Map).map(
-          (pi, cls) => MapEntry(int.parse(pi as String), cls as String),
-        );
-      });
-    }
     final studentsRaw = p.getString('students');
     if (studentsRaw != null) {
       final decodedS = jsonDecode(studentsRaw) as Map;
@@ -338,18 +316,6 @@ class AppState {
       });
     }
     profilePhotoPath = p.getString('profilePhotoPath') ?? '';
-    isActivated = p.getBool('isActivated') ?? false;
-    activationCode = p.getString('activationCode') ?? '';
-    final expiresRaw = p.getString('expiresAt');
-    expiresAt = expiresRaw != null ? DateTime.tryParse(expiresRaw) : null;
-    _cleanOldRelief();
-  }
-
-  // Remove relief entries for any day before today
-  static void _cleanOldRelief() {
-    final today = dateKey(DateTime.now());
-    reliefMap.removeWhere((k, _) => k != today);
-    reliefClassMap.removeWhere((k, _) => k != today);
   }
 }
 
@@ -386,286 +352,9 @@ class TeacherApp extends StatelessWidget {
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: kPrimaryBlue),
       ),
-      home: !AppState.isActivated
-          ? const ActivationScreen()
-          : AppState.expiresAt != null && DateTime.now().isAfter(AppState.expiresAt!)
-          ? const ExpiredScreen()
-          : AppState.name.isNotEmpty && AppState.timetable.isNotEmpty
+      home: AppState.name.isNotEmpty && AppState.timetable.isNotEmpty
           ? const TimetablePage()
           : const OnboardingFlow(),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ACTIVATION SCREEN
-// ═══════════════════════════════════════════════════════════════════════════════
-class ActivationScreen extends StatefulWidget {
-  const ActivationScreen({super.key});
-  @override
-  State<ActivationScreen> createState() => _ActivationScreenState();
-}
-
-class _ActivationScreenState extends State<ActivationScreen> {
-  final _codeCtrl = TextEditingController();
-  bool _loading = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    _codeCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _activate() async {
-    final code = _codeCtrl.text.trim().toUpperCase();
-    if (code.isEmpty) {
-      setState(() => _error = 'Please enter your activation code.');
-      return;
-    }
-    setState(() { _loading = true; _error = null; });
-    try {
-      final result = await Supabase.instance.client
-          .from('activation_codes')
-          .select()
-          .eq('code', code)
-          .maybeSingle();
-      if (result == null) {
-        setState(() => _error = 'Invalid code. Please check and try again.');
-      } else if (result['used'] == true) {
-        setState(() => _error = 'This code has already been used.');
-      } else {
-        final expiresAt = result['expires_at'] != null
-            ? DateTime.tryParse(result['expires_at'] as String)
-            : DateTime.now().add(const Duration(days: 14));
-        await Supabase.instance.client
-            .from('activation_codes')
-            .update({'used': true, 'activated_at': DateTime.now().toIso8601String()})
-            .eq('code', code);
-        AppState.isActivated = true;
-        AppState.activationCode = code;
-        AppState.expiresAt = expiresAt;
-        await AppState.save();
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const OnboardingFlow()),
-          );
-        }
-      }
-    } catch (e) {
-      setState(() => _error = 'Connection error. Check your internet and try again.');
-    }
-    setState(() => _loading = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: kBgLight,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: kPrimaryBlue.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(Icons.lock_rounded, color: kPrimaryBlue, size: 32),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Activate Your App',
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w900,
-                  color: kDarkText,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Enter the activation code sent to you via WhatsApp after payment.',
-                style: TextStyle(fontSize: 14, color: kMidText, height: 1.5),
-              ),
-              const SizedBox(height: 32),
-              TextField(
-                controller: _codeCtrl,
-                textCapitalization: TextCapitalization.characters,
-                style: const TextStyle(
-                  color: kDarkText,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 18,
-                  letterSpacing: 2,
-                ),
-                decoration: InputDecoration(
-                  hintText: 'e.g. TEACH-XK9P',
-                  hintStyle: TextStyle(
-                    color: kMidText.withValues(alpha: 0.5),
-                    fontWeight: FontWeight.w400,
-                    fontSize: 16,
-                    letterSpacing: 1,
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(color: kBorderCol),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide(color: kBorderCol),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: kPrimaryBlue, width: 2),
-                  ),
-                  errorText: _error,
-                  errorMaxLines: 2,
-                  prefixIcon: const Icon(Icons.vpn_key_rounded, color: kMidText),
-                ),
-                onSubmitted: (_) => _activate(),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: _loading ? null : _activate,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: kPrimaryBlue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: _loading
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.5,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Text(
-                          'Activate',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-                        ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Center(
-                child: Text(
-                  'Contact us on WhatsApp to get your activation code.',
-                  style: TextStyle(
-                    color: kMidText.withValues(alpha: 0.7),
-                    fontSize: 12,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// EXPIRED SCREEN
-// ═══════════════════════════════════════════════════════════════════════════════
-class ExpiredScreen extends StatelessWidget {
-  const ExpiredScreen({super.key});
-
-  // ── Replace with your WhatsApp number ─────────────────────────────────────
-  static const _whatsappNumber = '94XXXXXXXXX'; // e.g. 94771234567
-
-  @override
-  Widget build(BuildContext context) {
-    final expires = AppState.expiresAt;
-    final expiredDaysAgo = expires != null
-        ? DateTime.now().difference(expires).inDays
-        : 0;
-
-    return Scaffold(
-      backgroundColor: kBgLight,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF2F2),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(Icons.lock_clock_rounded, color: Color(0xFFDC2626), size: 32),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'Subscription Expired',
-                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: kDarkText),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                expiredDaysAgo <= 0
-                    ? 'Your 14-day access expired today.'
-                    : 'Your 14-day access expired $expiredDaysAgo day${expiredDaysAgo == 1 ? '' : 's'} ago.',
-                style: const TextStyle(fontSize: 14, color: kMidText, height: 1.5),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'To continue using the app, please renew your subscription and contact us on WhatsApp with your payment receipt.',
-                style: TextStyle(fontSize: 14, color: kMidText, height: 1.5),
-              ),
-              const SizedBox(height: 32),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton.icon(
-                  onPressed: () async {
-                    final uri = Uri.parse('https://wa.me/$_whatsappNumber?text=Hi%2C%20I%20would%20like%20to%20renew%20my%20Teacher%20Planner%20subscription.');
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  },
-                  icon: const Icon(Icons.chat_rounded),
-                  label: const Text('Contact on WhatsApp', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF25D366),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const ActivationScreen()),
-                  ),
-                  icon: const Icon(Icons.vpn_key_rounded, color: kPrimaryBlue),
-                  label: const Text('Enter New Code', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: kPrimaryBlue)),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: kPrimaryBlue),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
@@ -2116,23 +1805,20 @@ PCol pColors(PeriodType t) {
 class Period {
   final int number;
   final String subject, className;
-  final String reliefClass;
   final PeriodType type;
   final TimeOfDay startTime, endTime;
   const Period({
     required this.number,
     required this.subject,
     required this.className,
-    this.reliefClass = '',
     required this.type,
     required this.startTime,
     required this.endTime,
   });
-  Period copyWith({PeriodType? type, String? reliefClass}) => Period(
+  Period copyWith({PeriodType? type}) => Period(
     number: number,
     subject: subject,
     className: className,
-    reliefClass: reliefClass ?? this.reliefClass,
     type: type ?? this.type,
     startTime: startTime,
     endTime: endTime,
@@ -2206,9 +1892,8 @@ List<Period> buildPeriods(DateTime now) {
   return result.asMap().entries.map((e) {
     final i = e.key;
     final p = e.value;
-    if (relieved.contains(i)) {
-      final rc = AppState.reliefClassMap[dk]?[i] ?? '';
-      return p.copyWith(type: PeriodType.relief, reliefClass: rc);
+    if (relieved.contains(i) && p.type != PeriodType.off) {
+      return p.copyWith(type: PeriodType.relief);
     }
     if (nowMins >= _toMin(p.startTime) && nowMins < _toMin(p.endTime)) {
       return p.copyWith(type: PeriodType.current);
@@ -3094,22 +2779,6 @@ class _TasksTab extends StatelessWidget {
                                 ),
                               IconButton(
                                 icon: const Icon(
-                                  Icons.send_rounded,
-                                  color: kPrimaryBlue,
-                                  size: 18,
-                                ),
-                                tooltip: 'Send to another period',
-                                onPressed: () => showDialog(
-                                  context: context,
-                                  builder: (_) => _SendTaskDialog(
-                                    task: t,
-                                    sourceDate: date,
-                                    sourcePeriodIdx: periodIdx,
-                                  ),
-                                ).then((_) => onChanged()),
-                              ),
-                              IconButton(
-                                icon: const Icon(
                                   Icons.delete_outline_rounded,
                                   color: Color(0xFFEF4444),
                                   size: 20,
@@ -3160,101 +2829,6 @@ class _TasksTab extends StatelessWidget {
               ),
             ),
           ),
-        ),
-      ],
-    );
-  }
-}
-
-// ─── Send task dialog ─────────────────────────────────────────────────────────
-class _SendTaskDialog extends StatefulWidget {
-  final Map<String, String> task;
-  final DateTime sourceDate;
-  final int sourcePeriodIdx;
-  const _SendTaskDialog({
-    required this.task,
-    required this.sourceDate,
-    required this.sourcePeriodIdx,
-  });
-  @override
-  State<_SendTaskDialog> createState() => _SendTaskDialogState();
-}
-
-class _SendTaskDialogState extends State<_SendTaskDialog> {
-  static const _dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-  int _selectedDay = 0;
-  int _selectedPeriod = 0;
-
-  DateTime _targetDate(int weekday) {
-    final today = DateTime.now();
-    int diff = weekday - today.weekday;
-    if (diff <= 0) diff += 7;
-    return today.add(Duration(days: diff));
-  }
-
-  List<String> get _periodsForDay {
-    final tt = AppState.timetable;
-    if (_selectedDay >= tt.length) return [];
-    return tt[_selectedDay].asMap().entries.map((e) {
-      final subj = e.value['subject'] ?? '';
-      return 'Period ${e.key + 1}${subj.isNotEmpty ? ': $subj' : ''}';
-    }).toList();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final periods = _periodsForDay;
-    final clampedPeriod = _selectedPeriod.clamp(0, periods.isEmpty ? 0 : periods.length - 1);
-    return AlertDialog(
-      title: const Text('Send Task To', style: TextStyle(fontWeight: FontWeight.w800)),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Day', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: kMidText)),
-          const SizedBox(height: 6),
-          DropdownButton<int>(
-            value: _selectedDay,
-            isExpanded: true,
-            items: List.generate(5, (i) => DropdownMenuItem(value: i, child: Text(_dayNames[i]))),
-            onChanged: (v) => setState(() { _selectedDay = v!; _selectedPeriod = 0; }),
-          ),
-          const SizedBox(height: 12),
-          const Text('Period', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: kMidText)),
-          const SizedBox(height: 6),
-          periods.isEmpty
-              ? const Text('No periods configured', style: TextStyle(color: kMidText, fontSize: 13))
-              : DropdownButton<int>(
-                  value: clampedPeriod,
-                  isExpanded: true,
-                  items: List.generate(periods.length, (i) => DropdownMenuItem(
-                    value: i,
-                    child: Text(periods[i], overflow: TextOverflow.ellipsis),
-                  )),
-                  onChanged: (v) => setState(() => _selectedPeriod = v!),
-                ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: kPrimaryBlue,
-            foregroundColor: Colors.white,
-          ),
-          onPressed: periods.isEmpty ? null : () {
-            final targetDate = _targetDate(_selectedDay + 1);
-            AppState.addTask(targetDate, clampedPeriod, Map<String, String>.from(widget.task));
-            AppState.save();
-            Navigator.pop(context);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Task sent to ${_dayNames[_selectedDay]}, Period ${clampedPeriod + 1}')),
-            );
-          },
-          child: const Text('Send'),
         ),
       ],
     );
@@ -3654,8 +3228,8 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
             ),
           ),
           const SizedBox(height: 14),
-          // Name field — only shown for voice_note
-          if (_type == 'voice_note') TextField(
+          // Name field
+          TextField(
             controller: _nameCtrl,
             decoration: InputDecoration(
               hintText: 'Task name / description',
@@ -3787,11 +3361,11 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
             height: 48,
             child: ElevatedButton(
               onPressed: () {
-                if (_type == 'voice_note' && _nameCtrl.text.trim().isEmpty) return;
+                if (_nameCtrl.text.trim().isEmpty) return;
                 if (_isFile && _pickedFilePath == null) return;
-                if (_isTextOrDoc && _useFileForDoc && _pickedFilePath == null) return;
-                if (_isUrl && _contentCtrl.text.trim().isEmpty) return;
-                if (_isTextOrDoc && !_useFileForDoc && _contentCtrl.text.trim().isEmpty) return;
+                if (_isTextOrDoc && _useFileForDoc && _pickedFilePath == null) {
+                  return;
+                }
                 String content;
                 if (_isFile) {
                   content = _pickedFilePath!;
@@ -3800,20 +3374,9 @@ class _AddTaskSheetState extends State<AddTaskSheet> {
                 } else {
                   content = _contentCtrl.text.trim();
                 }
-                // Auto-generate name when field is hidden
-                String taskName = _nameCtrl.text.trim();
-                if (taskName.isEmpty) {
-                  if (_isUrl) {
-                    taskName = content.length > 40 ? content.substring(0, 40) : content;
-                  } else if (_pickedFileName != null) {
-                    taskName = _pickedFileName!;
-                  } else {
-                    taskName = content.length > 40 ? '${content.substring(0, 40)}...' : content;
-                  }
-                }
                 widget.onAdd({
                   'type': _type,
-                  'name': taskName,
+                  'name': _nameCtrl.text.trim(),
                   'content': content,
                 });
                 Navigator.of(context).pop();
@@ -4049,11 +3612,7 @@ class PeriodCard extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    isOff
-                        ? 'Off Period'
-                        : period.type == PeriodType.relief
-                        ? 'Relief${period.reliefClass.isNotEmpty ? ' – ${period.reliefClass}' : ''}'
-                        : period.subject,
+                    isOff ? 'Off Period' : period.subject,
                     style: TextStyle(
                       color: c.text,
                       fontSize: fontSize,
@@ -4667,55 +4226,17 @@ class _SchedulePageState extends State<SchedulePage>
         d.day == _today.day;
   }
 
-  Future<void> _toggleRelief(int tab, int idx) async {
+  void _toggleRelief(int tab, int idx) {
     final k = _dk(_dateForTab(tab));
-    AppState.reliefMap.putIfAbsent(k, () => {});
-    if (AppState.reliefMap[k]!.contains(idx)) {
-      // Remove relief
-      setState(() {
+    setState(() {
+      AppState.reliefMap.putIfAbsent(k, () => {});
+      if (AppState.reliefMap[k]!.contains(idx)) {
         AppState.reliefMap[k]!.remove(idx);
-        AppState.reliefClassMap[k]?.remove(idx);
-      });
-      AppState.save();
-    } else {
-      // Ask for relief class before marking
-      final ctrl = TextEditingController();
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Relief Class', style: TextStyle(fontWeight: FontWeight.w800)),
-          content: TextField(
-            controller: ctrl,
-            autofocus: true,
-            decoration: InputDecoration(
-              hintText: 'Enter class (e.g. Grade 10A)',
-              filled: true,
-              fillColor: kBgSubtle,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: kBorderCol)),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: kBorderCol)),
-              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: kPrimaryBlue, width: 1.5)),
-            ),
-            style: const TextStyle(color: kDarkText, fontWeight: FontWeight.w600),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: kPrimaryBlue, foregroundColor: Colors.white),
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Confirm'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed == true) {
-        setState(() {
-          AppState.reliefMap[k]!.add(idx);
-          AppState.reliefClassMap.putIfAbsent(k, () => {});
-          AppState.reliefClassMap[k]![idx] = ctrl.text.trim();
-        });
-        AppState.save();
+      } else {
+        AppState.reliefMap[k]!.add(idx);
       }
-    }
+    });
+    AppState.save();
   }
 
   @override
@@ -5077,7 +4598,7 @@ class _SchedulePageState extends State<SchedulePage>
                               isOff
                                   ? 'Off Period'
                                   : isRelief
-                                  ? 'Relief${(AppState.reliefClassMap[dk]?[s['index'] as int] ?? '').isNotEmpty ? ' – ${AppState.reliefClassMap[dk]![s['index'] as int]}' : ''}'
+                                  ? 'Relief'
                                   : '${s['subject']}',
                               style: TextStyle(
                                 color: tc,
