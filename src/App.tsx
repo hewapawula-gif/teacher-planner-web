@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { supabase } from "./supabase";
+import appLogo from "./imports/icon_reference.png";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Phase = "waiting" | "connecting" | "connected";
@@ -115,7 +116,7 @@ function WaitingScreen({ sessionId }: { sessionId: string }) {
     <div className="min-h-screen flex flex-col" style={{ background: "linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 40%, #F0FDF4 100%)" }}>
       {/* Top bar */}
       <div className="flex items-center gap-3 px-8 py-5 bg-white/80 backdrop-blur-md border-b border-slate-100">
-        <img src="/icon_reference.png" alt="SL Teacher" className="w-9 h-9 rounded-xl object-cover" />
+        <img src={appLogo} alt="SL Teacher" className="w-9 h-9 rounded-xl object-cover" />
         <span className="font-extrabold text-lg" style={{ color: "#1A1A2E" }}>SL Teacher Web</span>
         <div className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-200">
           <LiveDot color="#F59E0B" />
