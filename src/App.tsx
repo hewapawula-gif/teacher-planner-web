@@ -105,7 +105,7 @@ function WaitingScreen({ sessionId }: { sessionId: string }) {
   }, []);
 
   const steps = [
-    { n: "1", text: "Open Teacher Planner on your phone" },
+    { n: "1", text: "Open SL Teacher on your phone" },
     { n: "2", text: 'Tap the 🔲 QR icon in the timetable header' },
     { n: "3", text: 'Tap "Scan Web QR" and point camera at the QR below' },
     { n: "4", text: "Your timetable will appear here automatically" },
@@ -115,10 +115,8 @@ function WaitingScreen({ sessionId }: { sessionId: string }) {
     <div className="min-h-screen flex flex-col" style={{ background: "linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 40%, #F0FDF4 100%)" }}>
       {/* Top bar */}
       <div className="flex items-center gap-3 px-8 py-5 bg-white/80 backdrop-blur-md border-b border-slate-100">
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: "#3B5BDB" }}>
-          <span className="text-lg">📋</span>
-        </div>
-        <span className="font-extrabold text-lg" style={{ color: "#1A1A2E" }}>Teacher Planner Web</span>
+        <img src="/icon_reference.png" alt="SL Teacher" className="w-9 h-9 rounded-xl object-cover" />
+        <span className="font-extrabold text-lg" style={{ color: "#1A1A2E" }}>SL Teacher Web</span>
         <div className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-200">
           <LiveDot color="#F59E0B" />
           <span className="text-xs font-bold text-amber-600">Waiting for phone{dots}</span>
@@ -160,7 +158,7 @@ function WaitingScreen({ sessionId }: { sessionId: string }) {
                 Scan this QR with<br />your phone
               </h1>
               <p className="text-slate-500 text-sm leading-relaxed">
-                Open Teacher Planner, tap the QR icon, then scan this screen. Your full timetable will appear here instantly.
+                Open SL Teacher, tap the QR icon, then scan this screen. Your full timetable will appear here instantly.
               </p>
             </div>
 
@@ -214,7 +212,7 @@ function Sidebar({ data, onDisconnect }: { data: ConnectData; onDisconnect: () =
       <div className="px-5 py-5 border-b border-white/10">
         <div className="flex items-center gap-2 mb-4">
           <span className="text-base">📋</span>
-          <span className="text-white font-extrabold text-sm">Teacher Planner</span>
+          <span className="text-white font-extrabold text-sm">SL Teacher</span>
           <div className="ml-auto flex items-center gap-1.5 px-2 py-1 rounded-full bg-emerald-400/15">
             <LiveDot color="#34D399" />
             <span className="text-[10px] font-bold text-emerald-300">Live</span>

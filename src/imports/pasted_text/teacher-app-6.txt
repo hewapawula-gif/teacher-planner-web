@@ -14,7 +14,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tzData;
-import 'package:flutter_timezone/flutter_timezone.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ── REPLACE THESE with your real Supabase credentials ─────────────────────────
@@ -31,7 +30,6 @@ void main() async {
   );
   await AppState.load(); // restore saved data before UI builds
   tzData.initializeTimeZones();
-  tz.setLocalLocation(tz.getLocation('Asia/Colombo'));
   await NotificationService.initialize();
   if (AppState.notificationsEnabled) NotificationService.scheduleForToday();
   SystemChrome.setSystemUIOverlayStyle(
@@ -59,10 +57,11 @@ class NotificationService {
     await _plugin.initialize(
       const InitializationSettings(android: android, iOS: ios),
     );
-    final androidImpl = _plugin
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-    await androidImpl?.requestNotificationsPermission();
-    await androidImpl?.requestExactAlarmsPermission();
+    await _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.requestNotificationsPermission();
   }
 
   static int _toMin(TimeOfDay t) => t.hour * 60 + t.minute;
@@ -73,38 +72,38 @@ class NotificationService {
     await _plugin.cancelAll();
 
     final now = DateTime.now();
-    if (now.weekday > 5) return; // weekend
+    final weekday = now.weekday; // 1=Mon … 5=Fri
+    if (weekday > 5) return; // weekend
+    final dayIdx = weekday - 1;
+    if (dayIdx >= AppState.timetable.length) return;
 
-    // Use buildPeriods() — it already computes correct start times
-    final periods = buildPeriods(now);
+    final dayPeriods = AppState.timetable[dayIdx];
     final location = tz.local;
 
-    for (final period in periods) {
+    for (int i = 0; i < dayPeriods.length; i++) {
+      final p = dayPeriods[i];
+      final subject = p['subject'] ?? '';
+      final className = p['class'] ?? '';
+      if (subject.isEmpty || subject == 'Off Period') continue;
+
+      // Parse start time from timetable entry — reconstruct from AppState timing
+      final startMins = _periodStartMin(i);
+      if (startMins == null) continue;
+
       final scheduledTime = tz.TZDateTime(
         location,
-        now.year, now.month, now.day,
-        period.startTime.hour,
-        period.startTime.minute,
+        now.year,
+        now.month,
+        now.day,
+        startMins ~/ 60,
+        startMins % 60,
       );
-      if (scheduledTime.isBefore(tz.TZDateTime.now(location))) continue;
-
-      final String title;
-      final String body;
-      if (period.type == PeriodType.off || period.subject == 'Off Period') {
-        title = 'Period ${period.number}';
-        body = 'Off Period';
-      } else if (period.type == PeriodType.relief) {
-        title = 'Period ${period.number}  •  ${period.reliefClass}';
-        body = 'Relief Period';
-      } else {
-        title = 'Period ${period.number}  •  ${period.className}';
-        body = period.subject;
-      }
+      if (scheduledTime.isBefore(now)) continue;
 
       await _plugin.zonedSchedule(
-        period.number,
-        title,
-        body,
+        i,
+        'Period ${i + 1}  •  $className',
+        subject,
         scheduledTime,
         NotificationDetails(
           android: AndroidNotificationDetails(
@@ -113,10 +112,11 @@ class NotificationService {
             channelDescription: 'Alerts at the start of each period',
             importance: Importance.high,
             priority: Priority.high,
+            sound: const RawResourceAndroidNotificationSound('notification'),
             playSound: true,
             styleInformation: BigTextStyleInformation(
-              body,
-              summaryText: title,
+              subject,
+              summaryText: 'Period ${i + 1}  •  $className',
             ),
           ),
           iOS: const DarwinNotificationDetails(
@@ -131,6 +131,46 @@ class NotificationService {
             UILocalNotificationDateInterpretation.absoluteTime,
       );
     }
+  }
+
+  // Reconstruct period start time in minutes from AppState timing config
+  static int? _periodStartMin(int periodIdx) {
+    final fs = AppState.firstStart;
+    final fe = AppState.firstEnd;
+    final is_ = AppState.intervalStart;
+    final ie = AppState.intervalEnd;
+    if (fs == null) return null;
+
+    int mins = fs.hour * 60 + fs.minute;
+    if (periodIdx == 0) return mins;
+
+    final firstDur = fe != null
+        ? (fe.hour * 60 + fe.minute) - mins
+        : AppState.duration;
+
+    mins += firstDur;
+
+    for (int i = 1; i < periodIdx; i++) {
+      // Check if interval falls here
+      if (is_ != null && ie != null) {
+        final intStart = is_.hour * 60 + is_.minute;
+        if (mins == intStart) {
+          mins = ie.hour * 60 + ie.minute;
+        }
+      }
+      mins += AppState.duration;
+    }
+
+    // Check if interval falls before this period
+    if (is_ != null && ie != null && periodIdx > 0) {
+      final intStart = is_.hour * 60 + is_.minute;
+      final intEnd = ie.hour * 60 + ie.minute;
+      if (mins >= intStart && mins < intEnd) {
+        mins = intEnd;
+      }
+    }
+
+    return mins;
   }
 
   static Future<void> cancelAll() => _plugin.cancelAll();
@@ -253,7 +293,7 @@ class AppState {
   // reliefClassMap[dateKey][periodIdx] = className for relief substitution
   static final Map<String, Map<int, String>> reliefClassMap = {};
   static String profilePhotoPath = '';
-  static bool notificationsEnabled = true;
+  static bool notificationsEnabled = false;
   static bool isActivated = false;
   static String activationCode = '';
   static DateTime? expiresAt;
@@ -443,7 +483,7 @@ class AppState {
       });
     }
     profilePhotoPath = p.getString('profilePhotoPath') ?? '';
-    notificationsEnabled = p.getBool('notificationsEnabled') ?? true;
+    notificationsEnabled = p.getBool('notificationsEnabled') ?? false;
     isActivated = p.getBool('isActivated') ?? false;
     activationCode = p.getString('activationCode') ?? '';
     final expiresRaw = p.getString('expiresAt');
@@ -6096,7 +6136,7 @@ class _StudentManagementPageState extends State<StudentManagementPage> {
 // ═══════════════════════════════════════════════════════════════════════════════
 // WEB CONNECT PAGE  –  WhatsApp Web model
 // 1. This page shows a camera scanner
-// 2. Teacher opens slteacher.online on PC → PC shows a QR
+// 2. Teacher opens teacher-planner-web.vercel.app on PC → PC shows a QR
 // 3. Teacher scans that QR with this page → extracts session UUID
 // 4. App uploads timetable JSON to Supabase sessions table
 // 5. Web page auto-refreshes and shows the timetable
@@ -6240,12 +6280,8 @@ class _WebConnectPageState extends State<WebConnectPage> {
         cloudUrls[content] = url;
         _uploadedFileNames.add(fileName);
       } catch (e) {
-        final msg = e.toString().toLowerCase();
-        final friendly = msg.contains('socket') || msg.contains('network') ||
-            msg.contains('connection') || msg.contains('timeout')
-            ? 'No internet connection'
-            : 'Upload failed';
-        _uploadErrors.add('${content.split('/').last}: $friendly');
+        // Store the error so _buildDoneView can show it
+        _uploadErrors.add('${content.split('/').last}: $e');
       }
     }
     return cloudUrls;
@@ -6331,17 +6367,9 @@ class _WebConnectPageState extends State<WebConnectPage> {
         _cloudUploaded = cloudUrls.length;
       });
     } catch (e) {
-      final msg = e.toString().toLowerCase();
       setState(() {
         _phase = _WcPhase.error;
-        _errorMsg = msg.contains('socket') ||
-                msg.contains('network') ||
-                msg.contains('connection') ||
-                msg.contains('unreachable') ||
-                msg.contains('timeout') ||
-                msg.contains('host')
-            ? 'No internet connection. Please connect to the internet and try again.'
-            : 'Something went wrong. Please try again.';
+        _errorMsg = e.toString();
       });
     }
   }
@@ -6424,8 +6452,15 @@ class _WebConnectPageState extends State<WebConnectPage> {
     if (sid != null) {
       try {
         await Supabase.instance.client.from('sessions').delete().eq('id', sid);
-      } catch (_) {
-        // Silently ignore disconnect errors — no internet is fine here
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Session delete failed: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     }
     // Delete uploaded files from storage
@@ -6536,7 +6571,7 @@ class _WebConnectPageState extends State<WebConnectPage> {
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: const Text(
-                  'Open slteacher.online on your PC, then scan the QR shown on screen.',
+                  'Open teacher-planner-web.vercel.app on your PC, then scan the QR shown on screen.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white,
@@ -6572,7 +6607,7 @@ class _WebConnectPageState extends State<WebConnectPage> {
             ),
             const SizedBox(height: 10),
             ...[
-              'Open slteacher.online on your PC browser',
+              'Open teacher-planner-web.vercel.app on your PC browser',
               'The web page will show a QR code',
               'Scan that QR with this screen',
               'Your timetable appears on the PC instantly!',
@@ -6644,24 +6679,6 @@ class _WebConnectPageState extends State<WebConnectPage> {
             fontWeight: FontWeight.w600,
           ),
         ),
-      ],
-    ),
-  );
-
-  Widget _serverStep(String num, String text) => Padding(
-    padding: const EdgeInsets.only(top: 5),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 20,
-          height: 20,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(color: kPrimaryBlue.withOpacity(0.12), shape: BoxShape.circle),
-          child: Text(num, style: const TextStyle(color: kPrimaryBlue, fontSize: 10, fontWeight: FontWeight.w900)),
-        ),
-        const SizedBox(width: 8),
-        Expanded(child: Text(text, style: const TextStyle(color: kDarkText, fontSize: 12, fontWeight: FontWeight.w600))),
       ],
     ),
   );
@@ -6841,7 +6858,7 @@ class _WebConnectPageState extends State<WebConnectPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Download Files Without Internet',
+                          'File Transfer Server',
                           style: TextStyle(
                             color: kDarkText,
                             fontSize: 14,
@@ -6850,8 +6867,8 @@ class _WebConnectPageState extends State<WebConnectPage> {
                         ),
                         Text(
                           _serverRunning
-                              ? 'Server running — PC can access your files'
-                              : 'Transfer files over WiFi, no internet needed',
+                              ? 'Running — PC can download files'
+                              : 'Enable to let PC download your files',
                           style: TextStyle(
                             color: _serverRunning
                                 ? const Color(0xFF16A34A)
@@ -6905,70 +6922,45 @@ class _WebConnectPageState extends State<WebConnectPage> {
                   ),
                 ],
               ),
-              if (!_serverRunning) ...[
-                const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: kBgSubtle,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: kBorderCol),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'How to use:',
-                        style: TextStyle(color: kDarkText, fontSize: 12, fontWeight: FontWeight.w800),
-                      ),
-                      const SizedBox(height: 6),
-                      _serverStep('1', 'Connect phone and PC to the same WiFi'),
-                      _serverStep('2', 'Enable the server using the toggle above'),
-                      _serverStep('3', 'Open the URL shown below in your PC browser'),
-                      _serverStep('4', 'Download your files directly — no internet needed'),
-                    ],
-                  ),
-                ),
-              ],
               if (_serverRunning && _serverUrl != null) ...[
                 const SizedBox(height: 10),
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFDCFCE7),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFF86EFAC)),
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      const Text(
-                        'Server is running! Open this URL on your PC browser:',
-                        style: TextStyle(color: Color(0xFF15803D), fontSize: 11, fontWeight: FontWeight.w700),
+                      const Icon(
+                        Icons.circle,
+                        color: Color(0xFF16A34A),
+                        size: 8,
                       ),
-                      const SizedBox(height: 8),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: const Color(0xFF86EFAC)),
-                        ),
+                      const SizedBox(width: 8),
+                      Expanded(
                         child: Text(
                           _serverUrl!,
                           style: const TextStyle(
-                            color: Color(0xFF15803D),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.5,
+                            color: Color(0xFF16A34A),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      _serverStep('✓', 'Phone and PC must be on the same WiFi'),
-                      _serverStep('✓', 'If page not found, allow port 8899 in Windows Firewall'),
                     ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Phone and PC must be on the same WiFi',
+                  style: TextStyle(
+                    color: kMidText,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ],
